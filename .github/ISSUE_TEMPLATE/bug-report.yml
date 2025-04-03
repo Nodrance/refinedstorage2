@@ -58,3 +58,11 @@ body:
       label: Relevant log output
       description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
       render: shell
+  - type: checkboxes
+    id: jeicheck
+    attributes:
+      label: Did you forget to install the JEI integration?
+      description:
+      options:
+        - label: I am not complaining that the + button is missing in JEI, and I did not forget to install the JEI integration
+          required: true
