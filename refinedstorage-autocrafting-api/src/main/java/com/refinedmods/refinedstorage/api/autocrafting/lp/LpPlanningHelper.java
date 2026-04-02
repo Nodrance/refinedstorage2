@@ -1,7 +1,7 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
-import com.refinedmods.refinedstorage.api.autocrafting.PatternRepositoryImpl;
+import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
@@ -22,8 +22,8 @@ public final class LpPlanningHelper {
 
     /**
      * Determines whether to use the LP system for a given resource.
-     * 
-     * Returns true if all ingredients in the crafting tree have exactly one viable input
+     *
+     * <p>Returns true if all ingredients in the crafting tree have exactly one viable input
      * (i.e., in storage or craftable via a pattern). If an ingredient has multiple
      * possible inputs but only one is actually available or craftable, it is not
      * considered fuzzy. Returns false (use traditional system) only when multiple viable
@@ -31,7 +31,7 @@ public final class LpPlanningHelper {
      */
     public static boolean shouldUseLPSystem(final ResourceKey requestedResource,
                                      final RootStorage rootStorage,
-                                     final PatternRepositoryImpl patternRepository) {
+                                     final PatternRepository patternRepository) {
         final Set<ResourceKey> visitedResources = new HashSet<>();
         final ArrayDeque<ResourceKey> resourcesToVisit = new ArrayDeque<>();
         resourcesToVisit.add(requestedResource);
@@ -71,7 +71,7 @@ public final class LpPlanningHelper {
      */
     public static Collection<Pattern> collectRelevantPatternsForLp(final ResourceKey requestedResource,
                                                             final RootStorage rootStorage,
-                                                            final PatternRepositoryImpl patternRepository) {
+                                                            final PatternRepository patternRepository) {
         final Set<Pattern> relevantPatterns = new LinkedHashSet<>();
         final Set<ResourceKey> visitedResources = new HashSet<>();
         final ArrayDeque<ResourceKey> resourcesToVisit = new ArrayDeque<>();

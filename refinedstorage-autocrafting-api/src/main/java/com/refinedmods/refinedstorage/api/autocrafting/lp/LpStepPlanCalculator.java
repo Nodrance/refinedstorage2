@@ -2,10 +2,6 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpCraftingSolver;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpExecutionPlanStep;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPatternRecipe;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpResourceSet;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 

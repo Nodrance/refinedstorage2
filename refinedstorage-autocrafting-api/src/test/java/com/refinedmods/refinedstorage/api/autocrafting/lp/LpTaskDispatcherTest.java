@@ -1,15 +1,13 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
-import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
+import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
 import com.refinedmods.refinedstorage.api.autocrafting.task.ExternalPatternSinkProvider;
 import com.refinedmods.refinedstorage.api.autocrafting.task.StepBehavior;
-import com.refinedmods.refinedstorage.api.autocrafting.task.Task;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskListener;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskSnapshot;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskState;
-import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
 import com.refinedmods.refinedstorage.api.core.Action;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceList;
@@ -20,12 +18,9 @@ import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorageImpl;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.function.Function;
+import java.util.function.Predicate;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +33,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LpTaskDispatcherTest {
     private static final ExternalPatternSinkProvider EMPTY_SINKS = ignored -> List.of();
-    private static final Function<PatternLayout, List<?>> NO_EXTERNAL_SINKS = ignored -> List.of();
 
     @Test
     void shouldCompleteImmediatelyWhenCancelledBeforeSteppingAndNotNotify() {
@@ -48,13 +42,15 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(), false),
             rootPattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         assertThat(dispatcher.shouldNotify()).isTrue();
 
         dispatcher.cancel();
-        final boolean changed = dispatcher.step(new RootStorageImpl(), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
+        final boolean changed = dispatcher.step(
+            new RootStorageImpl(), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY
+        );
 
         assertThat(changed).isTrue();
         assertThat(dispatcher.getState()).isEqualTo(TaskState.COMPLETED);
@@ -69,12 +65,14 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(stepPattern, 0, 1)), false),
             stepPattern,
-            ignored -> Optional.empty()
+            ignored -> false
         );
         final RootStorage storage = storageWith(A, 4);
 
         dispatcher.step(storage, EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
-        final boolean changedOnSecondStep = dispatcher.step(storage, EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
+        final boolean changedOnSecondStep = dispatcher.step(
+            storage, EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY
+        );
 
         assertThat(dispatcher.getState()).isEqualTo(TaskState.RUNNING);
         assertThat(changedOnSecondStep).isFalse();
@@ -91,7 +89,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(first, 0, 1), step(second, 1, 1)), true),
             second,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(C, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         dispatcher.step(storageWith(A, 1, B, 1), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
@@ -109,7 +107,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(first, 0, 1), step(second, 1, 1)), false),
             second,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(C, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         dispatcher.step(storageWith(A, 1, B, 1), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
@@ -127,7 +125,7 @@ class LpTaskDispatcherTest {
             new LpStepPlan(List.of(step(stepPattern, 0, 3)),
                 false),
             stepPattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         final long firstIntercepted = dispatcher.beforeInsert(A, 5);
@@ -146,7 +144,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(stepPattern, 0, 1)), false),
             stepPattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(X, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         dispatcher.step(storageWith(A, 1), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
@@ -172,7 +170,7 @@ class LpTaskDispatcherTest {
             2,
             new LpStepPlan(List.of(step(pattern, 0, 1), step(pattern, 0, 1)), false),
             pattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         final TaskStatus status = dispatcher.getStatus();
@@ -192,7 +190,7 @@ class LpTaskDispatcherTest {
             2,
             new LpStepPlan(List.of(step(pattern, 0, 1), step(pattern, 0, 1)), true),
             pattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         final TaskStatus status = dispatcher.getStatus();
@@ -212,7 +210,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(), false),
             rootPattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         assertThat(dispatcher.getStatus().percentageCompleted()).isEqualTo(1D);
@@ -226,7 +224,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(stepPattern, 0, 1)), false),
             stepPattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         dispatcher.cancel();
@@ -246,7 +244,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(pattern, 0, 1)), false),
             pattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         final boolean changed = dispatcher.step(
@@ -268,7 +266,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(pat, 0, 1)), false),
             pat,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         // Step 1: READY→RUNNING (explicitly sets changed=true but OR→AND still fires).
@@ -300,7 +298,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(pattern, 0, 1)), true),
             pattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
         // Transition to RUNNING first (no resources yet)
         dispatcher.step(storageWith(), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
@@ -325,7 +323,7 @@ class LpTaskDispatcherTest {
             3,
             new LpStepPlan(List.of(step(pattern, 0, 3)), false),
             pattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         // Provide 4 A: enough for 2 iterations (4/2=2), not 3
@@ -345,7 +343,7 @@ class LpTaskDispatcherTest {
             2,
             new LpStepPlan(List.of(step(pattern, 0, 2)), false),
             pattern,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         // Pending need = 2*2 = 4; insert 3 (more than enough but less than excess)
@@ -373,7 +371,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(step1, 0, 1), step(step2, 1, 1)), true),
             step2,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
 
         // Step until step1's subtask is dispatched and completes, then check snapshot
@@ -399,7 +397,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(stepPat, 0, 1)), false),
             stepPat,
-            p -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, p), Actor.EMPTY, false))
+            p -> true
         );
         // First step: READY->RUNNING + dispatch + subtask steps
         dispatcher.step(storageWith(A, 1), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY);
@@ -407,7 +405,7 @@ class LpTaskDispatcherTest {
         // Subsequent steps: keep stepping until subtask completes and is pruned
         boolean pruned = false;
         for (int i = 0; i < 10; i++) {
-            final boolean changed = dispatcher.step(
+            dispatcher.step(
                 storageWith(), EMPTY_SINKS, StepBehavior.DEFAULT, TaskListener.EMPTY
             );
             if (dispatcher.getState() == TaskState.COMPLETED) {
@@ -419,25 +417,6 @@ class LpTaskDispatcherTest {
     }
 
     @Test
-    void shouldConsumeAndValidateRequirementsViaReflection() throws Exception {
-        final Map<ResourceKey, Long> requirements = new LinkedHashMap<>();
-        requirements.put(A, 2L);
-        requirements.put(B, 1L);
-
-        final Map<ResourceKey, Long> available = new LinkedHashMap<>();
-        available.put(A, 3L);
-        available.put(B, 1L);
-
-        assertThat(invokeCanFulfill(requirements, available)).isTrue();
-
-        invokeConsume(requirements, available);
-
-        assertThat(available.get(A)).isEqualTo(1L);
-        assertThat(available.get(B)).isZero();
-        assertThat(invokeCanFulfill(requirements, available)).isFalse();
-    }
-
-    @Test
     void shouldReserveAcrossActiveSubTasksInAfterInsert() throws Exception {
         final Pattern pattern = pattern().ingredient(A, 1).output(B, 1).build();
         final LpTaskDispatcher dispatcher = newDispatcher(
@@ -445,7 +424,7 @@ class LpTaskDispatcherTest {
             1,
             new LpStepPlan(List.of(step(pattern, 0, 1)), false),
             pattern,
-            ignored -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, pattern), Actor.EMPTY, false))
+            ignored -> true
         );
 
         final FakeTask first = new FakeTask(0, 2, false, TaskState.RUNNING, Map.of(), Map.of());
@@ -466,7 +445,7 @@ class LpTaskDispatcherTest {
             2,
             new LpStepPlan(List.of(step(pattern, 0, 1), step(pattern, 0, 1)), false),
             pattern,
-            ignored -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, pattern), Actor.EMPTY, false))
+            ignored -> true
         );
 
         dispatcher.beforeInsert(A, 3);
@@ -480,69 +459,6 @@ class LpTaskDispatcherTest {
 
         assertThat(snapshot.copyInternalStorage().get(A)).isEqualTo(7L);
         assertThat(snapshot.initialRequirements().get(B)).isEqualTo(3L);
-    }
-
-    @Test
-    void shouldCalculateProgressFromPendingAndActiveCounts() throws Exception {
-        final Pattern pattern = pattern().ingredient(A, 1).output(B, 1).build();
-        final LpTaskDispatcher dispatcher = newDispatcher(
-            B,
-            4,
-            new LpStepPlan(List.of(
-                step(pattern, 0, 1),
-                step(pattern, 0, 1),
-                step(pattern, 0, 1),
-                step(pattern, 0, 1)
-            ), false),
-            pattern,
-            ignored -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, pattern), Actor.EMPTY, false))
-        );
-
-        final FakeTask active = new FakeTask(0, 0, false, TaskState.RUNNING, Map.of(), Map.of());
-        putActiveSubTask(dispatcher, active, Map.of(), false);
-
-        final Field pendingField = LpTaskDispatcher.class.getDeclaredField("pendingSteps");
-        pendingField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        final List<LpExecutionPlanStep> pending = (List<LpExecutionPlanStep>) pendingField.get(dispatcher);
-        while (pending.size() > 1) {
-            pending.removeLast();
-        }
-
-        final double progress = invokeProgress(dispatcher);
-
-        assertThat(progress).isEqualTo(0.5D);
-    }
-
-    @Test
-    void shouldStepOnlyExistingSubTasksViaReflection() throws Exception {
-        final Pattern pattern = pattern().ingredient(A, 1).output(B, 1).build();
-        final LpTaskDispatcher dispatcher = newDispatcher(
-            B,
-            1,
-            new LpStepPlan(List.of(step(pattern, 0, 1)), false),
-            pattern,
-            ignored -> Optional.of(new TaskImpl(LpDispatcherHelper.createDispatcherPlan(B, 1, pattern), Actor.EMPTY, false))
-        );
-
-        final FakeTask existing = new FakeTask(0, 0, true, TaskState.RUNNING, Map.of(), Map.of());
-        putActiveSubTask(dispatcher, existing, Map.of(), false);
-
-        final java.util.Set<com.refinedmods.refinedstorage.api.autocrafting.task.TaskId> taskIds =
-            new java.util.LinkedHashSet<>();
-        taskIds.add(existing.getId());
-        taskIds.add(com.refinedmods.refinedstorage.api.autocrafting.task.TaskId.create());
-
-        final boolean changed = invokeStepSpecificSubTasks(
-            dispatcher,
-            taskIds,
-            storageWith(),
-            EMPTY_SINKS,
-            StepBehavior.DEFAULT,
-            TaskListener.EMPTY
-        );
-
-        assertThat(changed).isTrue();
     }
 
     private static RootStorage storageWith(final Object... entries) {
@@ -564,7 +480,7 @@ class LpTaskDispatcherTest {
                                                   final long amount,
                                                   final LpStepPlan stepPlan,
                                                   final Pattern rootPattern,
-                                                  final Function<Pattern, Optional<Task>> patternProvider) {
+                                                  final Predicate<Pattern> hasProvider) {
         return new LpTaskDispatcher(
             resource,
             amount,
@@ -572,8 +488,7 @@ class LpTaskDispatcherTest {
             true,
             stepPlan,
             rootPattern,
-            patternProvider,
-            NO_EXTERNAL_SINKS
+            hasProvider
         );
     }
 
@@ -609,42 +524,8 @@ class LpTaskDispatcherTest {
         activeSubTasks.put(task.getId(), dispatchedSubTask);
     }
 
-    private static void invokeConsume(final Map<ResourceKey, Long> requirements,
-                                      final Map<ResourceKey, Long> available) throws Exception {
-        final Method method = LpTaskDispatcher.class.getDeclaredMethod("consume", Map.class, Map.class);
-        method.setAccessible(true);
-        method.invoke(null, requirements, available);
-    }
-
-    private static boolean invokeCanFulfill(final Map<ResourceKey, Long> requirements,
-                                            final Map<ResourceKey, Long> available) throws Exception {
-        final Method method = LpTaskDispatcher.class.getDeclaredMethod("canFulfill", Map.class, Map.class);
-        method.setAccessible(true);
-        return (boolean) method.invoke(null, requirements, available);
-    }
-
-    private static double invokeProgress(final LpTaskDispatcher dispatcher) throws Exception {
-        final Method method = LpTaskDispatcher.class.getDeclaredMethod("progress");
-        method.setAccessible(true);
-        return (double) method.invoke(dispatcher);
-    }
-
-    private static boolean invokeStepSpecificSubTasks(final LpTaskDispatcher dispatcher,
-                                                      final java.util.Set<?> taskIds,
-                                                      final RootStorage rootStorage,
-                                                      final ExternalPatternSinkProvider sinkProvider,
-                                                      final StepBehavior stepBehavior,
-                                                      final TaskListener listener) throws Exception {
-        final Method method = LpTaskDispatcher.class.getDeclaredMethod(
-            "stepSpecificSubTasks",
-            java.util.Set.class,
-            RootStorage.class,
-            ExternalPatternSinkProvider.class,
-            StepBehavior.class,
-            TaskListener.class
-        );
-        method.setAccessible(true);
-        return (boolean) method.invoke(dispatcher, taskIds, rootStorage, sinkProvider, stepBehavior, listener);
+    private static LpExecutionPlanStep step(final Pattern pattern, final int index, final long amount) {
+        return new LpExecutionPlanStep(LpPatternRecipe.fromPattern(pattern, index), amount);
     }
 
     private static final class FakeTask extends TaskImpl {
@@ -724,9 +605,5 @@ class LpTaskDispatcherTest {
                 false
             );
         }
-    }
-
-    private static LpExecutionPlanStep step(final Pattern pattern, final int index, final long amount) {
-        return new LpExecutionPlanStep(LpPatternRecipe.fromPattern(pattern, index), amount);
     }
 }

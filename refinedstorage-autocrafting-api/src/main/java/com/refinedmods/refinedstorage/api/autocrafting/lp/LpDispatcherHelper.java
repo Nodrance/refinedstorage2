@@ -1,10 +1,9 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpExecutionPlanStep;
+import com.refinedmods.refinedstorage.api.autocrafting.task.TaskPlan;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
-import com.refinedmods.refinedstorage.api.autocrafting.task.TaskPlan;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,7 +25,7 @@ public final class LpDispatcherHelper {
     public static Optional<TaskPlan> toTaskPlan(final ResourceKey resource,
                                           final long amount,
                                           final List<LpExecutionPlanStep> steps) {
-        final Pattern rootPattern = findRootPatternPrivate(resource, steps);
+        final Pattern rootPattern = findRootPattern(resource, steps);
         if (rootPattern == null) {
             return Optional.empty();
         }
@@ -171,19 +170,6 @@ public final class LpDispatcherHelper {
      */
     public static Pattern findRootPattern(final ResourceKey resource,
                                    final List<LpExecutionPlanStep> steps) {
-        for (int index = steps.size() - 1; index >= 0; index--) {
-            final Pattern pattern = steps.get(index).recipe().pattern();
-            final boolean producesResource = pattern.layout().outputs().stream()
-                .anyMatch(output -> output.resource().equals(resource));
-            if (producesResource) {
-                return pattern;
-            }
-        }
-        return null;
-    }
-
-    private static Pattern findRootPatternPrivate(final ResourceKey resource,
-                                           final List<LpExecutionPlanStep> steps) {
         for (int index = steps.size() - 1; index >= 0; index--) {
             final Pattern pattern = steps.get(index).recipe().pattern();
             final boolean producesResource = pattern.layout().outputs().stream()

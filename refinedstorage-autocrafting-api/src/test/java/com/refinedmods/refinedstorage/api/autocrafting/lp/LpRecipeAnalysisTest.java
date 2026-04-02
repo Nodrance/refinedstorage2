@@ -67,13 +67,13 @@ class LpRecipeAnalysisTest {
     @Test
     void shouldSelectTopPriorityRecipesPerOutputResource() {
         // Tests that for each output resource, only the highest priority recipe is selected.
-        final LpPatternRecipe topB = recipe(A, B, 1, 1, 0);
-        final LpPatternRecipe lowB = recipe(A, B, 2, 1, 0);
-        final LpPatternRecipe topC = recipe(B, C, 1, 1, 0);
+        LpPatternRecipe topB = recipe(A, B, 1, 1, 0);
+        LpPatternRecipe lowB = recipe(A, B, 2, 1, 0);
+        LpPatternRecipe topC = recipe(B, C, 1, 1, 0);
 
-        lowB.setEffectivePriority(0);
-        topB.setEffectivePriority(10);
-        topC.setEffectivePriority(1);
+        lowB = lowB.withEffectivePriority(0);
+        topB = topB.withEffectivePriority(10);
+        topC = topC.withEffectivePriority(1);
 
         final List<LpPatternRecipe> selected = LpRecipeAnalysis.selectTopPriorityRecipesPerOutputResource(
             List.of(lowB, topC, topB)

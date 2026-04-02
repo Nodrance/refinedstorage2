@@ -1,26 +1,22 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
-import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpExecutionPlanStep;
+import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
+import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatusBuilder;
 import com.refinedmods.refinedstorage.api.autocrafting.task.ExternalPatternSinkProvider;
 import com.refinedmods.refinedstorage.api.autocrafting.task.StepBehavior;
-import com.refinedmods.refinedstorage.api.autocrafting.task.Task;
+import com.refinedmods.refinedstorage.api.autocrafting.task.TaskId;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskListener;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskPlan;
-import com.refinedmods.refinedstorage.api.core.CoreValidations;
+import com.refinedmods.refinedstorage.api.autocrafting.task.TaskSnapshot;
+import com.refinedmods.refinedstorage.api.autocrafting.task.TaskState;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceList;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceListImpl;
 import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
-import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
-import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatusBuilder;
-import com.refinedmods.refinedstorage.api.autocrafting.task.TaskId;
-import com.refinedmods.refinedstorage.api.autocrafting.task.TaskSnapshot;
-import com.refinedmods.refinedstorage.api.autocrafting.task.TaskState;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -29,7 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
+import java.util.function.Predicate;
 
 public final class LpTaskDispatcher extends TaskImpl {
     private final long startTime = System.currentTimeMillis();
@@ -38,8 +34,7 @@ public final class LpTaskDispatcher extends TaskImpl {
     private final MutableResourceList bufferedInternalStorage = MutableResourceListImpl.create();
     private final Map<TaskId, DispatchedSubTask> activeSubTasks = new LinkedHashMap<>();
     private final boolean strictOrdering;
-    private final Function<Pattern, Optional<Task>> patternToTask; // Function to create tasks from patterns
-    private final Function<PatternLayout, List<?>> getExternalSinks;
+    private final Predicate<Pattern> hasProvider;
     private TaskState state = TaskState.READY;
     private boolean cancelled;
 
@@ -49,14 +44,12 @@ public final class LpTaskDispatcher extends TaskImpl {
                             final boolean notify,
                             final LpStepPlan lpStepPlan,
                             final Pattern rootPattern,
-                            final Function<Pattern, Optional<Task>> patternToTask,
-                            final Function<PatternLayout, List<?>> getExternalSinks) {
+                            final Predicate<Pattern> hasProvider) {
         super(LpDispatcherHelper.createDispatcherPlan(resource, amount, rootPattern), actor, notify);
         this.strictOrdering = lpStepPlan.hasRecipeCycles();
         this.pendingSteps = new java.util.ArrayList<>(lpStepPlan.steps());
         this.totalSteps = lpStepPlan.steps().size();
-        this.patternToTask = patternToTask;
-        this.getExternalSinks = getExternalSinks;
+        this.hasProvider = hasProvider;
     }
 
     @Override
@@ -236,8 +229,7 @@ public final class LpTaskDispatcher extends TaskImpl {
         final TaskPlan plan = LpDispatcherHelper.toSingleStepPlan(getResource(), -1, dispatchedStep, root);
         final Pattern pattern = step.recipe().pattern();
         
-        final Optional<Task> optionalProvider = patternToTask.apply(pattern);
-        if (optionalProvider.isEmpty()) {
+        if (!hasProvider.test(pattern)) {
             return Optional.empty();
         }
 
@@ -439,16 +431,6 @@ public final class LpTaskDispatcher extends TaskImpl {
         for (final Map.Entry<ResourceKey, Long> entry : requirements.entrySet()) {
             available.put(entry.getKey(), available.getOrDefault(entry.getKey(), 0L) - entry.getValue());
         }
-    }
-
-    private static boolean canFulfill(final Map<ResourceKey, Long> requirements,
-                                      final Map<ResourceKey, Long> available) {
-        for (final Map.Entry<ResourceKey, Long> entry : requirements.entrySet()) {
-            if (available.getOrDefault(entry.getKey(), 0L) < entry.getValue()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static long maxDispatchableIterations(final LpExecutionPlanStep step,

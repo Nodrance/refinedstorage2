@@ -20,7 +20,7 @@ public class LpPatternRecipe {
     private final LpResourceSet input;
     private final LpResourceSet output;
     private final int basePriority;
-    private Integer effectivePriority;
+    private final Integer effectivePriority;
 
     public LpPatternRecipe(final Pattern pattern,
                            final LpResourceSet input,
@@ -83,8 +83,8 @@ public class LpPatternRecipe {
         return effectivePriority;
     }
 
-    public void setEffectivePriority(final Integer effectivePriority) {
-        this.effectivePriority = effectivePriority;
+    public LpPatternRecipe withEffectivePriority(final Integer newEffectivePriority) {
+        return new LpPatternRecipe(pattern, input, output, basePriority, newEffectivePriority);
     }
 
     public boolean produces(final ResourceKey resource) {

@@ -120,8 +120,8 @@ final class LpRecipeAnalysis {
             recipes,
             bestRecipePriorities
         );
-        assignEffectivePriorities(prunedRecipesWithPriority, recipes);
-        return mapEntriesToRecipes(prunedRecipesWithPriority, recipes);
+        final List<LpPatternRecipe> updatedRecipes = assignEffectivePriorities(prunedRecipesWithPriority, recipes);
+        return mapEntriesToRecipes(prunedRecipesWithPriority, updatedRecipes);
     }
 
     private static List<RecipePriorityEntry> collectPrunedRecipesWithPriority(
@@ -143,7 +143,7 @@ final class LpRecipeAnalysis {
         return entries;
     }
 
-    private static void assignEffectivePriorities(final List<RecipePriorityEntry> sortedEntries,
+    private static List<LpPatternRecipe> assignEffectivePriorities(final List<RecipePriorityEntry> sortedEntries,
                                                   final List<LpPatternRecipe> recipes) {
         // Reduced cyclotomic complexity does not improve function quality
         final Map<UUID, Integer> effectivePriorities = new LinkedHashMap<>();
@@ -151,12 +151,16 @@ final class LpRecipeAnalysis {
             final RecipePriorityEntry recipeAndPriority = sortedEntries.get(index);
             effectivePriorities.put(recipeAndPriority.recipeId(), sortedEntries.size() - 1 - index);
         }
+        final List<LpPatternRecipe> result = new ArrayList<>(recipes.size());
         for (final LpPatternRecipe recipe : recipes) {
             final Integer effectivePriority = effectivePriorities.get(recipe.uniqueId());
             if (effectivePriority != null) {
-                recipe.setEffectivePriority(effectivePriority);
+                result.add(recipe.withEffectivePriority(effectivePriority));
+            } else {
+                result.add(recipe);
             }
         }
+        return result;
     }
 
     private static List<LpPatternRecipe> mapEntriesToRecipes(final List<RecipePriorityEntry> sortedEntries,

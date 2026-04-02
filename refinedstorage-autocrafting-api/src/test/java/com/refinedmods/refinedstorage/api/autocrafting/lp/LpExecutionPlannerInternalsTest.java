@@ -104,11 +104,9 @@ class LpExecutionPlannerInternalsTest {
     @Test
     void internalsShouldSortCandidatesAndIgnoreNonPositiveInputs() throws Exception {
         // Tests that candidates are sorted correctly by loop involvement and non-positive inputs are ignored.
-        final LpPatternRecipe loopRecipe = recipe(A, B, 1, 1, 0);
-        loopRecipe.setEffectivePriority(10);
+        final LpPatternRecipe loopRecipe = recipe(A, B, 1, 1, 0).withEffectivePriority(10);
 
-        final LpPatternRecipe nonLoop = recipe(B, C, 1, 1, 0);
-        nonLoop.setEffectivePriority(null);
+        final LpPatternRecipe nonLoop = recipe(B, C, 1, 1, 0).withEffectivePriority(null);
 
         final LpPatternRecipe weird = customRecipeWithInput(Map.of((ResourceKey) A, -2L, B, 3L), Map.of(C, 1L), 0);
 
@@ -176,10 +174,8 @@ class LpExecutionPlannerInternalsTest {
     @Test
     void internalsShouldPreferLoopCandidatesEvenWhenMaxBatchIsLower() throws Exception {
         // Loop membership should take precedence in candidate ordering.
-        final LpPatternRecipe loopRecipe = recipe(A, B, 1, 1, 0);
-        final LpPatternRecipe nonLoopRecipe = recipe(A, C, 1, 1, 0);
-        loopRecipe.setEffectivePriority(0);
-        nonLoopRecipe.setEffectivePriority(0);
+        final LpPatternRecipe loopRecipe = recipe(A, B, 1, 1, 0).withEffectivePriority(0);
+        final LpPatternRecipe nonLoopRecipe = recipe(A, C, 1, 1, 0).withEffectivePriority(0);
 
         final List<?> candidates = invokeBuildCandidates(
             List.of(loopRecipe, nonLoopRecipe),
@@ -195,11 +191,9 @@ class LpExecutionPlannerInternalsTest {
     @Test
     void internalsShouldUseMaxBatchBeforePriorityWhenSortingNonLoopCandidates() throws Exception {
         // Tests that max batch ordering is applied before effective priority for non-loop candidates.
-        final LpPatternRecipe highBatchLowPriority = recipe(A, B, 1, 1, 0);
-        highBatchLowPriority.setEffectivePriority(0);
+        final LpPatternRecipe highBatchLowPriority = recipe(A, B, 1, 1, 0).withEffectivePriority(0);
 
-        final LpPatternRecipe lowBatchHighPriority = recipe(A, C, 5, 1, 0);
-        lowBatchHighPriority.setEffectivePriority(10);
+        final LpPatternRecipe lowBatchHighPriority = recipe(A, C, 5, 1, 0).withEffectivePriority(10);
 
         final List<?> candidates = invokeBuildCandidates(
             List.of(highBatchLowPriority, lowBatchHighPriority),

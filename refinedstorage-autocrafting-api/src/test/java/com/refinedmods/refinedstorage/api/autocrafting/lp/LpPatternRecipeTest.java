@@ -97,19 +97,18 @@ class LpPatternRecipeTest {
     }
 
     @Test
-    void shouldCopyAndPreserveEffectivePriority() {
-        // Tests that copying a recipe preserves the effective priority setting independently.
+    void shouldPreserveEffectivePriorityViaWithMethod() {
+        // Tests that withEffectivePriority returns a new instance without mutating the original.
         final LpPatternRecipe sut = LpPatternRecipe.fromPattern(
             PatternBuilder.pattern().ingredient(A, 1).output(B, 1).build(),
             1
         );
-        sut.setEffectivePriority(42);
+        final LpPatternRecipe withPriority = sut.withEffectivePriority(42);
+        final LpPatternRecipe withDifferentPriority = withPriority.withEffectivePriority(99);
 
-        final LpPatternRecipe copy = sut.copy();
-        copy.setEffectivePriority(99);
-
-        assertThat(sut.effectivePriority()).isEqualTo(42);
-        assertThat(copy.effectivePriority()).isEqualTo(99);
+        assertThat(sut.effectivePriority()).isNull();
+        assertThat(withPriority.effectivePriority()).isEqualTo(42);
+        assertThat(withDifferentPriority.effectivePriority()).isEqualTo(99);
     }
 
     @Test

@@ -1,11 +1,7 @@
-package com.refinedmods.refinedstorage.api.network.impl.autocrafting;
+package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpExecutionPlanStep;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpStepPlan;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpStepPlanCalculator;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPatternRecipe;
 import com.refinedmods.refinedstorage.api.core.Action;
 import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.StorageImpl;
@@ -20,10 +16,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static com.refinedmods.refinedstorage.api.autocrafting.PatternBuilder.pattern;
-import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.A;
-import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.B;
-import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.C;
-import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.D;
+import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.A;
+import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.B;
+import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.C;
+import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.D;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
