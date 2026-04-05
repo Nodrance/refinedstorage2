@@ -67,7 +67,7 @@ class AutocraftingNetworkComponentLpDispatcherTest {
     // --- Planning Algorithm Selection ---
 
     @Test
-    void shouldUseTraditionalPlanningAlgorithmWhenPatternHasFuzzyInputs() {
+    void shouldUseLpWhenPatternHasFuzzyInputsWithMultipleViableOptions() {
         rootStorage.addSource(new StorageImpl());
         rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
         rootStorage.insert(B, 1, Action.EXECUTE, Actor.EMPTY);
@@ -76,7 +76,8 @@ class AutocraftingNetworkComponentLpDispatcherTest {
         provider.setPattern(1, pattern().ingredient(1).input(A).input(B).end().output(B, 1).build());
         sut.onContainerAdded(() -> provider);
 
-        assertThat(determinePlanningAlgorithm(B)).isEqualTo(PlanningAlgorithm.TRADITIONAL);
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(determinePlanningAlgorithm(B)).isEqualTo(PlanningAlgorithm.LP);
     }
 
     @Test
@@ -102,7 +103,7 @@ class AutocraftingNetworkComponentLpDispatcherTest {
     }
 
     @Test
-    void shouldUseTraditionalWhenFuzzyAndOneInStorageOneIsCraftable() {
+    void shouldUseLpWhenFuzzyAndOneInStorageOneIsCraftable() {
         rootStorage.addSource(new StorageImpl());
         rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
 
@@ -111,22 +112,24 @@ class AutocraftingNetworkComponentLpDispatcherTest {
         provider.setPattern(2, pattern().ingredient(D, 1).output(B, 1).build());
         sut.onContainerAdded(() -> provider);
 
-        assertThat(determinePlanningAlgorithm(C)).isEqualTo(PlanningAlgorithm.TRADITIONAL);
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(determinePlanningAlgorithm(C)).isEqualTo(PlanningAlgorithm.LP);
     }
 
     @Test
-    void shouldUseTraditionalWhenFuzzyAndBothAlternativesAreCraftable() {
+    void shouldUseLpWhenFuzzyAndBothAlternativesAreCraftable() {
         final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
         provider.setPattern(1, pattern().ingredient(1).input(A).input(B).end().output(C, 1).build());
         provider.setPattern(2, pattern().ingredient(D, 1).output(A, 1).build());
         provider.setPattern(3, pattern().ingredient(D, 1).output(B, 1).build());
         sut.onContainerAdded(() -> provider);
 
-        assertThat(determinePlanningAlgorithm(C)).isEqualTo(PlanningAlgorithm.TRADITIONAL);
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(determinePlanningAlgorithm(C)).isEqualTo(PlanningAlgorithm.LP);
     }
 
     @Test
-    void shouldUseTraditionalWhenRelevantDependencyPatternHasFuzzyInputs() {
+    void shouldUseLpWhenRelevantDependencyPatternHasFuzzyInputs() {
         rootStorage.addSource(new StorageImpl());
         rootStorage.insert(C, 1, Action.EXECUTE, Actor.EMPTY);
         rootStorage.insert(D, 1, Action.EXECUTE, Actor.EMPTY);
@@ -136,11 +139,12 @@ class AutocraftingNetworkComponentLpDispatcherTest {
         provider.setPattern(2, pattern().ingredient(1).input(C).input(D).end().output(B, 1).build());
         sut.onContainerAdded(() -> provider);
 
-        assertThat(determinePlanningAlgorithm(A)).isEqualTo(PlanningAlgorithm.TRADITIONAL);
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(determinePlanningAlgorithm(A)).isEqualTo(PlanningAlgorithm.LP);
     }
 
     @Test
-    void shouldUseTraditionalWhenOnlyViableInputHasFuzzyDependency() {
+    void shouldUseLpWhenOnlyViableInputHasFuzzyDependency() {
         rootStorage.addSource(new StorageImpl());
         rootStorage.insert(D, 1, Action.EXECUTE, Actor.EMPTY);
         rootStorage.insert(A_ALTERNATIVE, 1, Action.EXECUTE, Actor.EMPTY);
@@ -154,7 +158,8 @@ class AutocraftingNetworkComponentLpDispatcherTest {
         );
         sut.onContainerAdded(() -> provider);
 
-        assertThat(determinePlanningAlgorithm(C)).isEqualTo(PlanningAlgorithm.TRADITIONAL);
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(determinePlanningAlgorithm(C)).isEqualTo(PlanningAlgorithm.LP);
     }
 
     @Test

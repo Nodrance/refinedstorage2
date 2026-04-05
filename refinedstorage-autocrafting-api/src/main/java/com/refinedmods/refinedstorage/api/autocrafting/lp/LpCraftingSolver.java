@@ -13,15 +13,33 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
 
 import org.ojalgo.optimisation.Expression;
 import org.ojalgo.optimisation.ExpressionsBasedModel;
 import org.ojalgo.optimisation.Optimisation;
 import org.ojalgo.optimisation.Variable;
 
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public final class LpCraftingSolver {
     // Solves crafting problems with linear programming and execution-plan validation.
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(LpCraftingSolver.class);
     private final LpSolverOptions options;
 
     public LpCraftingSolver() {
@@ -35,10 +53,13 @@ public final class LpCraftingSolver {
     public PlanningOutcome solve(final List<LpPatternRecipe> recipes,
                                  final LpResourceSet startingResources,
                                  final LpResourceSet target) {
+        LOGGER.info("[LP] solve() called. Recipes: {}, Target: {}", recipes.size(), target);
         final long maxCraftableAmount = computeMaxCraftableTargetAmount(
             recipes, startingResources, target
         );
+        LOGGER.info("[LP] Max craftable amount for target {}: {}", target, maxCraftableAmount);
         if (maxCraftableAmount == 0) {
+            LOGGER.info("[LP] No craftable amount possible for target {}.", target);
             return new PlanningOutcome(
                 maxCraftableAmount,
                 Optional.empty(),
@@ -53,6 +74,7 @@ public final class LpCraftingSolver {
             target
         );
         if (cycleEliminationResult.executableResult().isPresent()) {
+            LOGGER.info("[LP] Found executable plan for target {}.", target);
             return new PlanningOutcome(
                 maxCraftableAmount,
                 cycleEliminationResult.executableResult(),
@@ -62,6 +84,7 @@ public final class LpCraftingSolver {
         }
 
         final Set<UUID> disabledRecipeIds = cycleEliminationResult.fallbackDisabledRecipeIds();
+        LOGGER.info("[LP] No executable plan found, fallback disabled recipes: {}", disabledRecipeIds);
         final List<LpPatternRecipe> reducedRecipes = recipes.stream()
             .filter(recipe -> !disabledRecipeIds.contains(recipe.uniqueId()))
             .map(LpPatternRecipe::copy)
@@ -81,17 +104,20 @@ public final class LpCraftingSolver {
     ) {
         validateInputs(recipes, startingResources, target);
         if (target.isEmpty()) {
+            LOGGER.info("[LP] Target is empty, cannot compute max craftable amount.");
             return 0;
         }
-
+        LOGGER.info("[LP] Pruning recipes");
         final List<LpPatternRecipe> prioritizedRecipes =
             LpRecipeAnalysis.prioritizeAndPruneRelevantRecipes(copyRecipes(recipes), target);
+        LOGGER.info("[LP] Getting relevant keys");
         final Set<ResourceKey> relevantResources = new LinkedHashSet<>(
             LpRecipeAnalysis.collectRelevantResourceKeys(prioritizedRecipes)
         );
         relevantResources.addAll(target.resourceKeys());
 
         final ResourceKey targetResource = target.resourceKeys().iterator().next();
+        LOGGER.info("[LP] Maximizing target {}", targetResource);
         final FlowSearchResult result = new FlowSearchModel(
             prioritizedRecipes,
             relevantResources,
@@ -102,14 +128,17 @@ public final class LpCraftingSolver {
             options
         ).maximize(targetResource);
         if (result == null) {
+            LOGGER.info("[LP] No feasible solution found for maximizing target {}.", targetResource);
             return 0;
         }
+        LOGGER.info("[LP] Calculated max craftable amount for target {}.", targetResource);
 
         final long maxCraftableAmount = Math.max(
             0L,
             result.finalInventoryValues().getAmount(targetResource)
                 - startingResources.getAmount(targetResource)
         );
+        LOGGER.info("[LP] Max craftable amount for {}: {}", targetResource, maxCraftableAmount);
         return maxCraftableAmount;
     }
 
@@ -181,6 +210,7 @@ public final class LpCraftingSolver {
     public CycleEliminationResult findExecutableSolutionViaCycleElimination(final List<LpPatternRecipe> recipes,
                                                                             final LpResourceSet startingResources,
                                                                             final LpResourceSet target) {
+        LOGGER.info("[LP] Starting cycle elimination for {} recipes.", recipes.size());
         validateInputs(recipes, startingResources, target);
 
         final ArrayDeque<Set<UUID>> attempts = new ArrayDeque<>();
@@ -195,6 +225,7 @@ public final class LpCraftingSolver {
         while (!attempts.isEmpty() && exploredBranches < options.maxCycleEliminationBranches()) {
             final Set<UUID> disabledRecipeIds = attempts.pop();
             exploredBranches++;
+            LOGGER.info("[LP] Cycle elimination attempt {}: disabledRecipeIds={}", exploredBranches, disabledRecipeIds);
 
             final Optional<LpCraftingSolution> solution = solveWithDisabledRecipes(
                 recipes,
@@ -203,6 +234,7 @@ public final class LpCraftingSolver {
                 disabledRecipeIds
             );
             if (solution.isEmpty()) {
+                LOGGER.info("[LP] No solution found with disabledRecipeIds={}", disabledRecipeIds);
                 bestFallbackDisabledRecipeIds = keepLargerSet(bestFallbackDisabledRecipeIds, disabledRecipeIds);
                 continue;
             }
@@ -213,6 +245,7 @@ public final class LpCraftingSolver {
                 startingResources
             );
             if (plan.isPresent()) {
+                LOGGER.info("[LP] Found executable plan after {} cycle elimination attempts.", exploredBranches);
                 return new CycleEliminationResult(
                     Optional.of(new ExecutablePlanResult(solution.get(), plan.get())),
                     Set.of()
@@ -226,10 +259,12 @@ public final class LpCraftingSolver {
             final LpRecipeAnalysis.CycleDetectionResult cycleDetectionResult =
                 LpRecipeAnalysis.detectRecipeCycles(usedRecipes);
             if (cycleDetectionResult.cycles().isEmpty()) {
+                LOGGER.info("[LP] No cycles detected in used recipes.");
                 bestFallbackDisabledRecipeIds = keepLargerSet(bestFallbackDisabledRecipeIds, disabledRecipeIds);
                 continue;
             }
 
+            LOGGER.info("[LP] Cycles detected: {}. Enqueuing break attempts.", cycleDetectionResult.cycles().size());
             enqueueCycleBreakAttempts(
                 cycleDetectionResult.cycles(),
                 solution.get(),
@@ -239,6 +274,7 @@ public final class LpCraftingSolver {
             );
         }
 
+        LOGGER.info("[LP] Cycle elimination exhausted. No executable plan found. Returning best fallback.");
         return new CycleEliminationResult(Optional.empty(), Set.copyOf(bestFallbackDisabledRecipeIds));
     }
 
@@ -296,6 +332,7 @@ public final class LpCraftingSolver {
                                                                   final LpResourceSet target,
                                                                   final Set<UUID> disabledRecipeIds) {
         // Solves the crafting problem with the given set of disabled recipe IDs, returning an optional solution.
+        LOGGER.info("[LP] Solving with disabled recipes: {}", disabledRecipeIds);
         final List<LpPatternRecipe> prioritizedRecipes =
             LpRecipeAnalysis.prioritizeAndPruneRelevantRecipes(copyRecipes(recipes), target);
         final Set<ResourceKey> relevantResources = new LinkedHashSet<>(
@@ -313,6 +350,7 @@ public final class LpCraftingSolver {
             options
         ).lexicographicMinimum();
         if (result == null) {
+            LOGGER.info("[LP] No feasible solution found with disabled recipes: {}", disabledRecipeIds);
             return Optional.empty();
         }
 
@@ -367,6 +405,8 @@ public final class LpCraftingSolver {
     }
 
     private static final class FlowSearchModel {
+        // Logger is not static to allow for context if needed in future
+        private final Logger logger = LoggerFactory.getLogger(FlowSearchModel.class);
         private final List<LpPatternRecipe> recipes;
         private final List<LpPatternRecipe> reversePriorityRecipes;
         private final Set<ResourceKey> relevantResources;
@@ -375,6 +415,12 @@ public final class LpCraftingSolver {
         private final Set<ResourceKey> constrainedResources;
         private final Set<UUID> disabledRecipeIds;
         private final LpSolverOptions options;
+        private static final long MODEL_CREATION_TIMEOUT_SECONDS = 10;
+        private static final long SOLVE_TIMEOUT_SECONDS = Long.getLong(
+            "refinedstorage.lp.solveTimeoutSeconds",
+            30L
+        );
+        private static final DateTimeFormatter THREAD_DUMP_TIMESTAMP_FORMATTER = DateTimeFormatter.ISO_INSTANT;
 
         private FlowSearchModel(final List<LpPatternRecipe> recipes,
                                 final Set<ResourceKey> relevantResources,
@@ -400,7 +446,9 @@ public final class LpCraftingSolver {
         }
 
         private FlowSearchResult lexicographicMinimum() {
+            LOGGER.info("[LP] Starting lexicographic minimum search with disabled recipes: {}", disabledRecipeIds);
             final FlowSearchResult feasibilityResult = solveWithObjective(null, null, false, Map.of());
+            LOGGER.info("[LP] Feasibility check result: {}", feasibilityResult == null ? "infeasible" : "feasible");
             if (feasibilityResult == null) {
                 return null;
             }
@@ -412,9 +460,11 @@ public final class LpCraftingSolver {
                     result,
                     "Expected lexicographic lock step to remain feasible"
                 );
+                LOGGER.info("[LP] Lexicographic lock step result for recipe {}: {}", recipe.uniqueId(), result);
                 lockedRecipeValues.put(recipe.uniqueId(), result.recipeValues().getOrDefault(recipe.uniqueId(), 0L));
             }
             final FlowSearchResult finalResult = solveWithObjective(null, null, false, lockedRecipeValues);
+            LOGGER.info("[LP] Final lexicographic minimum result: {}", finalResult);
             return finalResult;
         }
 
@@ -432,13 +482,62 @@ public final class LpCraftingSolver {
                                                     final UUID objectiveRecipeId,
                                                     final boolean maximize,
                                                     final Map<UUID, Long> lockedRecipeValues) {
-            final ExpressionsBasedModel model = new ExpressionsBasedModel();
+            LOGGER.info("[LP] Solving with objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+                objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues);
+
+            final FutureTask<FlowSearchResult> solveTask = new FutureTask<>(
+                () -> solveWithObjectiveInternal(objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues)
+            );
+            final Thread solveThread = new Thread(solveTask, "lp-ojalgo-solve");
+            solveThread.setDaemon(true);
+            solveThread.start();
+
+            try {
+                return solveTask.get(SOLVE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (final TimeoutException e) {
+                LOGGER.error(
+                    "[LP] Timed out solveWithObjective after {} seconds. objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+                    SOLVE_TIMEOUT_SECONDS,
+                    objectiveResource,
+                    objectiveRecipeId,
+                    maximize,
+                    lockedRecipeValues
+                );
+                logThreadDump();
+                persistThreadDumpToFile("solve-timeout");
+                solveThread.interrupt();
+                throw new IllegalStateException("Timed out in solveWithObjective", e);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted in solveWithObjective", e);
+            } catch (final ExecutionException e) {
+                final Throwable cause = e.getCause() == null ? e : e.getCause();
+                throw new IllegalStateException("Failed in solveWithObjective", cause);
+            }
+        }
+
+        private FlowSearchResult solveWithObjectiveInternal(final ResourceKey objectiveResource,
+                                                            final UUID objectiveRecipeId,
+                                                            final boolean maximize,
+                                                            final Map<UUID, Long> lockedRecipeValues) {
+            LOGGER.info("[LP] Entered solveWithObjectiveInternal on thread {}", Thread.currentThread().getName());
+
+            final ExpressionsBasedModel model = createModelWithDiagnostics();
+
+            LOGGER.info("[LP] Creating recipe vars");
             final Map<UUID, Variable> variableByRecipeId = createRecipeVariables(model);
+            LOGGER.info("[LP] Created model with {} variables for objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+                variableByRecipeId.size(), objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues);
             configureObjective(model, variableByRecipeId, objectiveResource, objectiveRecipeId);
+            LOGGER.info("[LP] Adding constraints");
             addResourceConstraints(model, variableByRecipeId);
+            LOGGER.info("[LP] Adding recipe locks");
             addRecipeLocks(model, variableByRecipeId, lockedRecipeValues);
 
+            LOGGER.info("[LP] Solving model with objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+                objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues);
             final Optimisation.Result result = maximize ? model.maximise() : model.minimise();
+            LOGGER.info("[LP] Solver result: {}", result);
             if (!result.getState().isFeasible()) {
                 return null;
             }
@@ -451,6 +550,71 @@ public final class LpCraftingSolver {
                 Map.copyOf(recipeValues),
                 finalInventoryValues.copy()
             );
+        }
+
+        private ExpressionsBasedModel createModelWithDiagnostics() {
+            final ClassLoader classLoader = ExpressionsBasedModel.class.getClassLoader();
+            final String classLoaderName = classLoader == null ? "bootstrap" : classLoader.toString();
+            final String codeSource = ExpressionsBasedModel.class.getProtectionDomain().getCodeSource() == null
+                ? "unknown"
+                : String.valueOf(ExpressionsBasedModel.class.getProtectionDomain().getCodeSource().getLocation());
+
+            LOGGER.info("[LP] Creating ExpressionsBasedModel with classLoader={} codeSource={}", classLoaderName, codeSource);
+
+            final FutureTask<ExpressionsBasedModel> task = new FutureTask<>(ExpressionsBasedModel::new);
+            final Thread modelConstructionThread = new Thread(task, "lp-ojalgo-model-construction");
+            modelConstructionThread.setDaemon(true);
+            modelConstructionThread.start();
+
+            try {
+                return task.get(MODEL_CREATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (final TimeoutException e) {
+                LOGGER.error("[LP] Timed out creating ExpressionsBasedModel after {} seconds. Dumping thread states.",
+                    MODEL_CREATION_TIMEOUT_SECONDS);
+                logThreadDump();
+                persistThreadDumpToFile("model-construction-timeout");
+                modelConstructionThread.interrupt();
+                throw new IllegalStateException("Timed out creating ExpressionsBasedModel", e);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while creating ExpressionsBasedModel", e);
+            } catch (final ExecutionException e) {
+                throw new IllegalStateException("Failed creating ExpressionsBasedModel", e.getCause());
+            }
+        }
+
+        private void logThreadDump() {
+            final ThreadInfo[] threadInfos = ManagementFactory.getThreadMXBean().dumpAllThreads(true, true);
+            LOGGER.error("[LP] Thread dump size={}", threadInfos.length);
+            for (final ThreadInfo threadInfo : threadInfos) {
+                LOGGER.error("[LP] Thread state dump:{}{}", System.lineSeparator(), threadInfo);
+            }
+        }
+
+        private void persistThreadDumpToFile(final String reason) {
+            final ThreadInfo[] threadInfos = ManagementFactory.getThreadMXBean().dumpAllThreads(true, true);
+            final String timestamp = THREAD_DUMP_TIMESTAMP_FORMATTER.format(Instant.now()).replace(':', '-');
+            final String fileName = "rs-lp-thread-dump-" + reason + "-" + timestamp + ".log";
+            final Path dumpFilePath = Path.of("logs", fileName);
+
+            final StringBuilder dump = new StringBuilder(8192)
+                .append("Refined Storage LP thread dump").append(System.lineSeparator())
+                .append("Reason: ").append(reason).append(System.lineSeparator())
+                .append("Timestamp: ").append(timestamp).append(System.lineSeparator())
+                .append("Thread count: ").append(threadInfos.length).append(System.lineSeparator())
+                .append(System.lineSeparator());
+
+            for (final ThreadInfo threadInfo : threadInfos) {
+                dump.append(threadInfo).append(System.lineSeparator());
+            }
+
+            try {
+                Files.createDirectories(dumpFilePath.getParent());
+                Files.writeString(dumpFilePath, dump.toString(), StandardCharsets.UTF_8);
+                LOGGER.error("[LP] Wrote thread dump to {}", dumpFilePath.toAbsolutePath());
+            } catch (final IOException e) {
+                LOGGER.error("[LP] Failed to write thread dump to {}", dumpFilePath.toAbsolutePath(), e);
+            }
         }
 
         private Map<UUID, Variable> createRecipeVariables(final ExpressionsBasedModel model) {

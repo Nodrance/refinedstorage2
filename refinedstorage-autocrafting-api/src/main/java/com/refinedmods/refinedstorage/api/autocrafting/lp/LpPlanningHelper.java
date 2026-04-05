@@ -9,7 +9,6 @@ import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -32,36 +31,36 @@ public final class LpPlanningHelper {
     public static boolean shouldUseLPSystem(final ResourceKey requestedResource,
                                      final RootStorage rootStorage,
                                      final PatternRepository patternRepository) {
-        final Set<ResourceKey> visitedResources = new HashSet<>();
-        final ArrayDeque<ResourceKey> resourcesToVisit = new ArrayDeque<>();
-        resourcesToVisit.add(requestedResource);
+        // final Set<ResourceKey> visitedResources = new HashSet<>();
+        // final ArrayDeque<ResourceKey> resourcesToVisit = new ArrayDeque<>();
+        // resourcesToVisit.add(requestedResource);
 
-        while (!resourcesToVisit.isEmpty()) {
-            final ResourceKey currentResource = resourcesToVisit.removeFirst();
-            if (!visitedResources.add(currentResource)) {
-                continue;
-            }
+        // while (!resourcesToVisit.isEmpty()) {
+        //     final ResourceKey currentResource = resourcesToVisit.removeFirst();
+        //     if (!visitedResources.add(currentResource)) {
+        //         continue;
+        //     }
 
-            for (final Pattern pattern : patternRepository.getByOutput(currentResource)) {
-                for (final var ingredient : pattern.layout().ingredients()) {
-                    if (ingredient.inputs().size() == 1) {
-                        resourcesToVisit.addLast(ingredient.inputs().getFirst());
-                        continue;
-                    }
-                    // Multiple possible inputs: only count those available in storage or craftable
-                    final List<ResourceKey> viableInputs = ingredient.inputs().stream()
-                        .filter(input -> rootStorage.get(input) > 0
-                            || !patternRepository.getByOutput(input).isEmpty())
-                        .toList();
-                    if (viableInputs.size() > 1) {
-                        return false;
-                    }
-                    if (!viableInputs.isEmpty()) {
-                        resourcesToVisit.addLast(viableInputs.getFirst());
-                    }
-                }
-            }
-        }
+        //     for (final Pattern pattern : patternRepository.getByOutput(currentResource)) {
+        //         for (final var ingredient : pattern.layout().ingredients()) {
+        //             if (ingredient.inputs().size() == 1) {
+        //                 resourcesToVisit.addLast(ingredient.inputs().getFirst());
+        //                 continue;
+        //             }
+        //             // Multiple possible inputs: only count those available in storage or craftable
+        //             final List<ResourceKey> viableInputs = ingredient.inputs().stream()
+        //                 .filter(input -> rootStorage.get(input) > 0
+        //                     || !patternRepository.getByOutput(input).isEmpty())
+        //                 .toList();
+        //             if (viableInputs.size() > 1) {
+        //                 return false;
+        //             }
+        //             if (!viableInputs.isEmpty()) {
+        //                 resourcesToVisit.addLast(viableInputs.getFirst());
+        //             }
+        //         }
+        //     }
+        // }
 
         return true;
     }

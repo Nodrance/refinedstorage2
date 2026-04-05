@@ -826,7 +826,7 @@ class AutocraftingNetworkComponentImplTest {
     }
 
     @Test
-    void shouldStartTaskWithTraditionalPlanningAlgorithm() {
+    void shouldStartTaskWithLpForFuzzyRecipe() {
         rootStorage.addSource(new StorageImpl());
         rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
         rootStorage.insert(B, 1, Action.EXECUTE, Actor.EMPTY);
@@ -835,13 +835,14 @@ class AutocraftingNetworkComponentImplTest {
         provider.setPattern(1, pattern().ingredient(1).input(A).input(B).end().output(C, 1).build());
         sut.onContainerAdded(() -> provider);
 
+        // LP system now handles fuzzy recipes through subset expansion
         final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
             C,
             1,
             Actor.EMPTY,
             false,
             CancellationToken.NONE,
-            PlanningAlgorithm.TRADITIONAL
+            PlanningAlgorithm.LP
         );
 
         assertThat(taskId).isPresent();
@@ -849,7 +850,7 @@ class AutocraftingNetworkComponentImplTest {
     }
 
     @Test
-    void shouldEnsureTaskWithTraditionalPlanningAlgorithm() {
+    void shouldEnsureTaskWithLpForFuzzyRecipe() {
         rootStorage.addSource(new StorageImpl());
         rootStorage.insert(A, 3, Action.EXECUTE, Actor.EMPTY);
         rootStorage.insert(B, 3, Action.EXECUTE, Actor.EMPTY);
@@ -858,12 +859,13 @@ class AutocraftingNetworkComponentImplTest {
         provider.setPattern(1, pattern().ingredient(1).input(A).input(B).end().output(C, 1).build());
         sut.onContainerAdded(() -> provider);
 
+        // LP system now handles fuzzy recipes through subset expansion
         final var result = ensureTaskExpectingAlgorithm(
             C,
             2,
             Actor.EMPTY,
             CancellationToken.NONE,
-            PlanningAlgorithm.TRADITIONAL
+            PlanningAlgorithm.LP
         );
 
         assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_CREATED);

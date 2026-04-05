@@ -32,7 +32,7 @@ dependencies {
     compileOnly(project(":refinedstorage-network"))
     compileOnly(project(":refinedstorage-autocrafting-api"))
     compileOnly(project(":refinedstorage-query-parser"))
-    compileOnly("org.ojalgo:ojalgo:${property("ojalgoVersion")}")
+    jarJar("org.ojalgo:ojalgo:${property("ojalgoVersion")}")
     commonJava(project(path = ":refinedstorage-common", configuration = "commonJava"))
     commonResources(project(path = ":refinedstorage-common", configuration = "commonResources"))
     commonJava(project(path = ":refinedstorage-common-api", configuration = "commonJava"))

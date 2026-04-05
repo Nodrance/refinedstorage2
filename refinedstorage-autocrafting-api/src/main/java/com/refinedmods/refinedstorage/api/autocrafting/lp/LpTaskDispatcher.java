@@ -27,7 +27,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public final class LpTaskDispatcher extends TaskImpl {
+    private static final Logger LOGGER = LoggerFactory.getLogger(LpTaskDispatcher.class);
     private final long startTime = System.currentTimeMillis();
     private final int totalSteps;
     private final List<LpExecutionPlanStep> pendingSteps;
@@ -67,20 +71,25 @@ public final class LpTaskDispatcher extends TaskImpl {
                         final ExternalPatternSinkProvider sinkProvider,
                         final StepBehavior stepBehavior,
                         final TaskListener listener) {
+        LOGGER.info("[LP] step() called. State: {}, Cancelled: {}, PendingSteps: {}, ActiveSubTasks: {}", state, cancelled, pendingSteps.size(), activeSubTasks.size());
         boolean changed = pruneCompletedSubTasks();
 
         if (state == TaskState.READY) {
             state = TaskState.RUNNING;
             changed = true;
+            LOGGER.info("[LP] Task state changed to RUNNING");
         }
 
         if (cancelled) {
+            LOGGER.info("[LP] Task cancelled. Cancelling all active subtasks.");
             cancelActiveSubTasks();
             if (activeSubTasks.isEmpty()) {
                 state = TaskState.COMPLETED;
+                LOGGER.info("[LP] All subtasks completed after cancellation. Task marked COMPLETED.");
                 return true;
             }
             state = TaskState.RETURNING_INTERNAL_STORAGE;
+            LOGGER.info("[LP] Returning internal storage after cancellation.");
             return changed;
         }
 
@@ -90,18 +99,24 @@ public final class LpTaskDispatcher extends TaskImpl {
             changed |= pruneCompletedSubTasks();
 
             if (strictOrdering) {
+                LOGGER.info("[LP] Using strict ordering for dispatch.");
                 changed |= dispatchStrict(rootStorage);
             } else {
+                LOGGER.info("[LP] Using relaxed ordering for dispatch.");
                 changed |= dispatchRelaxed(rootStorage);
             }
 
             final Set<TaskId> newSubTasks = new HashSet<>(activeSubTasks.keySet());
             newSubTasks.removeAll(existingSubTasks);
+            if (!newSubTasks.isEmpty()) {
+                LOGGER.info("[LP] New subtasks dispatched: {}", newSubTasks);
+            }
             changed |= stepSpecificSubTasks(newSubTasks, rootStorage, sinkProvider, stepBehavior, listener);
             changed |= pruneCompletedSubTasks();
 
             if (pendingSteps.isEmpty() && activeSubTasks.isEmpty()) {
                 state = TaskState.COMPLETED;
+                LOGGER.info("[LP] All steps and subtasks completed. Task marked COMPLETED.");
                 changed = true;
             }
         }
@@ -123,6 +138,7 @@ public final class LpTaskDispatcher extends TaskImpl {
                     .copyInternalStorage();
                 subTaskInternalStorage.getAll().forEach(resource ->
                     bufferedInternalStorage.add(resource, subTaskInternalStorage.get(resource)));
+                LOGGER.info("[LP] Subtask {} completed. Internal storage merged.", entry.getKey());
                 it.remove();
                 changed = true;
             }
@@ -133,6 +149,7 @@ public final class LpTaskDispatcher extends TaskImpl {
     private void cancelActiveSubTasks() {
         final List<DispatchedSubTask> snapshot = List.copyOf(activeSubTasks.values());
         for (final DispatchedSubTask subTask : snapshot) {
+            LOGGER.info("[LP] Cancelling subtask {}", subTask.task().getId());
             subTask.task().cancel();
         }
     }
@@ -162,15 +179,18 @@ public final class LpTaskDispatcher extends TaskImpl {
         final Map<ResourceKey, Long> available = availableWithReservations(rootStorage);
         final long dispatchIterations = maxDispatchableIterations(next, available);
         if (dispatchIterations <= 0) {
+            LOGGER.info("[LP] Strict dispatch: Not enough resources to dispatch next step.");
             return false;
         }
         final Map<ResourceKey, Long> requirements = stepRequirements(next, dispatchIterations);
 
         final Optional<TaskId> dispatched = dispatchSubTask(next, dispatchIterations, requirements);
         if (dispatched.isEmpty()) {
+            LOGGER.info("[LP] Strict dispatch: Failed to dispatch subtask for step {}.", next);
             return false;
         }
 
+        LOGGER.info("[LP] Strict dispatch: Dispatched subtask {} for step {} ({} iterations)", dispatched.get(), next, dispatchIterations);
         updatePendingStepAfterDispatch(0, next, dispatchIterations);
         return true;
     }
@@ -195,9 +215,11 @@ public final class LpTaskDispatcher extends TaskImpl {
 
                 final Optional<TaskId> dispatched = dispatchSubTask(step, dispatchIterations, requirements);
                 if (dispatched.isEmpty()) {
+                    LOGGER.info("[LP] Relaxed dispatch: Failed to dispatch subtask for step {}.", step);
                     continue;
                 }
 
+                LOGGER.info("[LP] Relaxed dispatch: Dispatched subtask {} for step {} ({} iterations)", dispatched.get(), step, dispatchIterations);
                 consume(requirements, available);
                 updatePendingStepAfterDispatch(index, step, dispatchIterations);
                 changed = true;
@@ -409,9 +431,9 @@ public final class LpTaskDispatcher extends TaskImpl {
     private long getPendingRequirement(final ResourceKey resource) {
         long amount = 0;
         for (final LpExecutionPlanStep step : pendingSteps) {
-            for (final var ingredient : step.recipe().pattern().layout().ingredients()) {
-                if (ingredient.inputs().getFirst().equals(resource)) {
-                    amount += ingredient.amount() * step.iterations();
+            for (final var entry : step.recipe().input()) {
+                if (entry.getKey().equals(resource)) {
+                    amount += entry.getValue() * step.iterations();
                 }
             }
         }
@@ -436,14 +458,12 @@ public final class LpTaskDispatcher extends TaskImpl {
     private static long maxDispatchableIterations(final LpExecutionPlanStep step,
                                                   final Map<ResourceKey, Long> available) {
         long maxIterations = step.iterations();
-        final Pattern pattern = step.recipe().pattern();
-        for (final var ingredient : pattern.layout().ingredients()) {
-            final long perIterationAmount = ingredient.amount();
+        for (final var entry : step.recipe().input()) {
+            final long perIterationAmount = entry.getValue();
             if (perIterationAmount <= 0) {
                 continue;
             }
-            final ResourceKey ingredientResource = ingredient.inputs().getFirst();
-            final long availableAmount = available.getOrDefault(ingredientResource, 0L);
+            final long availableAmount = available.getOrDefault(entry.getKey(), 0L);
             maxIterations = Math.min(maxIterations, availableAmount / perIterationAmount);
             if (maxIterations <= 0) {
                 return 0;
@@ -455,10 +475,8 @@ public final class LpTaskDispatcher extends TaskImpl {
     private static Map<ResourceKey, Long> stepRequirements(final LpExecutionPlanStep step,
                                                            final long iterations) {
         final Map<ResourceKey, Long> requirements = new HashMap<>();
-        final Pattern pattern = step.recipe().pattern();
-        for (final var ingredient : pattern.layout().ingredients()) {
-            final ResourceKey ingredientResource = ingredient.inputs().getFirst();
-            requirements.merge(ingredientResource, ingredient.amount() * iterations, Long::sum);
+        for (final var entry : step.recipe().input()) {
+            requirements.merge(entry.getKey(), entry.getValue() * iterations, Long::sum);
         }
         return requirements;
     }

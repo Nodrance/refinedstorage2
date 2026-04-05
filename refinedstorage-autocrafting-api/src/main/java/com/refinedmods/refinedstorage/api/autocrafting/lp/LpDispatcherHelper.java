@@ -62,11 +62,25 @@ public final class LpDispatcherHelper {
         final Pattern pattern = step.recipe().pattern();
         final long iterations = step.iterations();
 
+        // Build per-iteration budget from recipe's concrete inputs for greedy matching
+        final Map<ResourceKey, Long> availablePerIteration = new LinkedHashMap<>();
+        for (final var entry : step.recipe().input()) {
+            availablePerIteration.put(entry.getKey(), entry.getValue());
+        }
+
         final Map<Integer, Map<ResourceKey, Long>> ingredients = new LinkedHashMap<>();
         final List<ResourceAmount> initialRequirements = new ArrayList<>();
         for (int ingredientIndex = 0; ingredientIndex < pattern.layout().ingredients().size(); ingredientIndex++) {
             final var ingredient = pattern.layout().ingredients().get(ingredientIndex);
-            final ResourceKey resource = ingredient.inputs().getFirst();
+            ResourceKey resource = ingredient.inputs().getFirst();
+            for (final ResourceKey option : ingredient.inputs()) {
+                final long available = availablePerIteration.getOrDefault(option, 0L);
+                if (available >= ingredient.amount()) {
+                    resource = option;
+                    availablePerIteration.put(option, available - ingredient.amount());
+                    break;
+                }
+            }
             final long totalAmount = ingredient.amount() * iterations;
             ingredients.put(ingredientIndex, Map.of(resource, totalAmount));
             initialRequirements.add(new ResourceAmount(resource, totalAmount));

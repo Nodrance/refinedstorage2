@@ -5,16 +5,16 @@ import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationT
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 
@@ -32,43 +32,53 @@ public final class LpStepPlanCalculator {
             return Optional.empty();
         }
 
-        final List<LpPatternRecipe> recipes = buildLpRecipes(patterns, logger);
+        final LpResourceSet startingResources = buildLpStartingResources(rootStorage);
+        final LpFuzzyExpander.FuzzyExpansionResult expansionResult = buildFuzzyExpandedRecipes(
+            patterns, startingResources
+        );
+        final List<LpPatternRecipe> recipes = expansionResult.expandedRecipes();
         if (recipes.isEmpty()) {
             return Optional.empty();
         }
 
+        final LpResourceSet augmentedStarting = LpFuzzyExpander.augmentStartingResources(
+            startingResources, expansionResult.createdSubsets()
+        );
+
         final LpCraftingSolver.PlanningOutcome outcome = new LpCraftingSolver().solve(
             recipes,
-            buildLpStartingResources(rootStorage),
+            augmentedStarting,
             buildTarget(rootStorage, resource, amount)
         );
         if (outcome.executableResult().isEmpty()) {
             return Optional.empty();
         }
 
-        final List<LpExecutionPlanStep> steps = outcome.executableResult().get().plan();
+        List<LpExecutionPlanStep> steps = outcome.executableResult().get().plan();
+        final boolean hasCycles = hasRecipeCycles(steps);
+
+        // Decode fuzzy variant steps back to original patterns with concrete inputs
+        if (!expansionResult.variantToSourcePattern().isEmpty()) {
+            final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
+            for (final Pattern p : patterns) {
+                patternsById.put(p.id(), p);
+            }
+            steps = LpFuzzyExpander.decodePlanSteps(
+                steps, expansionResult.variantToSourcePattern(), patternsById, startingResources
+            );
+        }
+
         return steps.isEmpty()
             ? Optional.empty()
-            : Optional.of(new LpStepPlan(steps, hasRecipeCycles(steps)));
+            : Optional.of(new LpStepPlan(steps, hasCycles));
     }
 
-    private static List<LpPatternRecipe> buildLpRecipes(final Collection<Pattern> patterns, final Logger logger) {
-        final List<Pattern> sorted = patterns.stream()
-            .sorted(Comparator.comparing(Pattern::id))
-            .toList();
-        final List<LpPatternRecipe> recipes = new ArrayList<>();
-        for (int index = 0; index < sorted.size(); index++) {
-            try {
-                recipes.add(LpPatternRecipe.fromPattern(sorted.get(index), index));
-            } catch (final IllegalArgumentException e) {
-                throw new IllegalStateException(
-                    "LP solver received LP-incompatible pattern %s. "
-                        .formatted(sorted.get(index)),
-                    e
-                );
-            }
-        }
-        return recipes;
+    private static LpFuzzyExpander.FuzzyExpansionResult buildFuzzyExpandedRecipes(
+        final Collection<Pattern> patterns,
+        final LpResourceSet startingResources
+    ) {
+        final Set<ResourceKey> craftableResources = LpFuzzyExpander.collectCraftableResources(patterns);
+        return LpFuzzyExpander.expandFuzzyPatterns(patterns, startingResources, craftableResources);
     }
 
     private static LpResourceSet buildLpStartingResources(final RootStorage rootStorage) {
@@ -96,13 +106,20 @@ public final class LpStepPlanCalculator {
                                           final RootStorage rootStorage,
                                           final ResourceKey resource,
                                           final long amount) {
-        final List<LpPatternRecipe> recipes = buildLpRecipes(patterns, logger);
+        final LpResourceSet startingResources = buildLpStartingResources(rootStorage);
+        final LpFuzzyExpander.FuzzyExpansionResult expansionResult = buildFuzzyExpandedRecipes(
+            patterns, startingResources
+        );
+        final List<LpPatternRecipe> recipes = expansionResult.expandedRecipes();
         if (recipes.isEmpty()) {
             return 0;
         }
+        final LpResourceSet augmentedStarting = LpFuzzyExpander.augmentStartingResources(
+            startingResources, expansionResult.createdSubsets()
+        );
         final LpCraftingSolver.PlanningOutcome outcome = new LpCraftingSolver().solve(
             recipes,
-            buildLpStartingResources(rootStorage),
+            augmentedStarting,
             buildTarget(rootStorage, resource, 1)
         );
         return Math.min(outcome.maxCraftableAmount(), amount);

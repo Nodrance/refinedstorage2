@@ -20,14 +20,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LpPlanningHelperTest {
     @Test
-    void shouldNotUseLpWhenFuzzyIngredientHasMultipleViableInputs() {
+    void shouldUseLpWhenFuzzyIngredientHasMultipleViableInputs() {
         final Pattern root = pattern().ingredient(1).input(A).input(B).end().output(X, 1).build();
         final PatternRepositoryImpl repository = repository(root);
         final RootStorage rootStorage = storage(new ResourceAmount(A, 1), new ResourceAmount(B, 1));
 
         final boolean shouldUseLp = LpPlanningHelper.shouldUseLPSystem(X, rootStorage, repository);
 
-        assertThat(shouldUseLp).isFalse();
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(shouldUseLp).isTrue();
     }
 
     @Test
@@ -67,10 +68,9 @@ class LpPlanningHelperTest {
     }
 
     @Test
-    void shouldNotUseLpWhenDeepSubPatternHasFuzzyIngredientWithMultipleViableOptions() {
-        // Kills shouldUseLPSystem line 48 (addLast removal for single-input traversal).
-        // If the single-input ingredient A is not added to the traversal queue, A's sub-pattern
-        // is never visited and its fuzzy ingredient is not detected.
+    void shouldUseLpWhenDeepSubPatternHasFuzzyIngredientWithMultipleViableOptions() {
+        // Verifies that the LP system accepts deep sub-patterns with fuzzy ingredients
+        // now that fuzzy expansion is supported.
         final Pattern craftA = pattern().ingredient(1).input(B).input(C).end().output(A, 1).build();
         final Pattern root = pattern().ingredient(A, 1).output(X, 1).build();
         final PatternRepositoryImpl repository = repository(root, craftA);
@@ -78,15 +78,14 @@ class LpPlanningHelperTest {
 
         final boolean shouldUseLp = LpPlanningHelper.shouldUseLPSystem(X, rootStorage, repository);
 
-        // A has fuzzy ingredient [B, C] with both viable -> should return false
-        assertThat(shouldUseLp).isFalse();
+        // LP system now handles fuzzy recipes through subset expansion
+        assertThat(shouldUseLp).isTrue();
     }
 
     @Test
     void shouldUseLpWhenDeepSingleIngredientHasOnlyOneViableOption() {
-        // Kills shouldUseLPSystem lines 59/60 negated-conditional and addLast removal.
-        // If the viable input A is not queued for further traversal, its sub-pattern's
-        // fuzzy ingredient with multiple viable options is never detected.
+        // Verifies that the LP system accepts deep fuzzy patterns reached through
+        // single-ingredient traversal now that fuzzy expansion is supported.
         final Pattern craftA = pattern().ingredient(1).input(B).input(C).end().output(A, 1).build();
         final Pattern root = pattern().ingredient(1).input(A).input(Y).end().output(X, 1).build();
         final PatternRepositoryImpl repository = repository(root, craftA);
@@ -97,11 +96,10 @@ class LpPlanningHelperTest {
             new ResourceAmount(C, 1)
         );
 
-        // A is the only viable input for root's fuzzy slot. A should be queued for traversal.
-        // A's craftA pattern has both B and C viable -> should return false
+        // LP system now handles fuzzy recipes through subset expansion
         final boolean shouldUseLp = LpPlanningHelper.shouldUseLPSystem(X, rootStorage, repository);
 
-        assertThat(shouldUseLp).isFalse();
+        assertThat(shouldUseLp).isTrue();
     }
 
     @Test

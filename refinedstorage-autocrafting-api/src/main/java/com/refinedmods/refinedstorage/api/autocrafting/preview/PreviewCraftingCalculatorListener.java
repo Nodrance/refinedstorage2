@@ -2,6 +2,7 @@ package com.refinedmods.refinedstorage.api.autocrafting.preview;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.Amount;
+import com.refinedmods.refinedstorage.api.autocrafting.calculation.CalculationException;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationException;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculator;
@@ -32,6 +33,8 @@ public class PreviewCraftingCalculatorListener implements CraftingCalculatorList
             return new Preview(PreviewType.CYCLE_DETECTED, Collections.emptyList(), e.getPattern().layout().outputs());
         } catch (final NumberOverflowDuringCalculationException e) {
             return new Preview(PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList());
+        } catch (final CalculationException e) {
+            return new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList());
         } catch (final CancellationException e) {
             return new Preview(PreviewType.CANCELLED, Collections.emptyList(), Collections.emptyList());
         }

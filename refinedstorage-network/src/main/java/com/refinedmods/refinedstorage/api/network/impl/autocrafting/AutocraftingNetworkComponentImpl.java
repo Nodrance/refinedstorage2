@@ -9,6 +9,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalcu
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculatorImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpDispatcherHelper;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPlanningHelper;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPreviewCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpStepPlan;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpStepPlanCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpTaskDispatcher;
@@ -114,6 +115,17 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
         try {
             return CompletableFuture.supplyAsync(() -> {
                 final RootStorage rootStorage = rootStorageProvider.get();
+                if (LpPlanningHelper.shouldUseLPSystem(resource, rootStorage, patternRepository)) {
+                    final Collection<Pattern> relevantPatterns =
+                        LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, patternRepository);
+                    return Optional.of(LpPreviewCalculator.calculatePreview(
+                        relevantPatterns,
+                        rootStorage,
+                        resource,
+                        amount,
+                        cancellationToken
+                    ));
+                }
                 final CraftingCalculator calculator = new CraftingCalculatorImpl(patternRepository, rootStorage);
                 final Preview preview = PreviewCraftingCalculatorListener.calculatePreview(calculator, resource, amount,
                     cancellationToken);

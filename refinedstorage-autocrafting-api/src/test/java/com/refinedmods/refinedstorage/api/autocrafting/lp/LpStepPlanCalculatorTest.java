@@ -21,7 +21,6 @@ import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.B
 import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.C;
 import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.D;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LpStepPlanCalculatorTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(LpStepPlanCalculatorTest.class);
@@ -105,36 +104,40 @@ class LpStepPlanCalculatorTest {
     }
 
     @Test
-    void shouldFailFastWhenLpIncompatiblePatternIsProvided() {
+    void shouldReturnEmptyForFuzzyPatternWithNoViableInputs() {
+        // Fuzzy pattern with no resources in storage and no sub-patterns:
+        // all ingredient options are pruned, recipe is dropped, result is empty.
         final Pattern fuzzy = pattern().ingredient(1).input(A).input(B).end().output(C, 1).build();
 
-        assertThatThrownBy(() -> LpStepPlanCalculator.calculateSteps(
+        final Optional<LpStepPlan> result = LpStepPlanCalculator.calculateSteps(
             List.of(fuzzy),
             LOGGER,
             new RootStorageImpl(),
             C,
             1,
             CancellationToken.NONE
-        ))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("LP solver received LP-incompatible pattern");
+        );
+
+        assertThat(result).isEmpty();
     }
 
     @Test
-    void shouldFailFastWhenAnyLpIncompatiblePatternIsProvided() {
+    void shouldHandleMixedFuzzyAndConcretePatterns() {
+        // Fuzzy pattern with no viable inputs is pruned; concrete pattern remains but
+        // has no starting resources, so no executable plan exists.
         final Pattern compatible = pattern().ingredient(A, 1).output(B, 1).build();
         final Pattern fuzzy = pattern().ingredient(1).input(A).input(B).end().output(C, 1).build();
 
-        assertThatThrownBy(() -> LpStepPlanCalculator.calculateSteps(
+        final Optional<LpStepPlan> result = LpStepPlanCalculator.calculateSteps(
             List.of(compatible, fuzzy),
             LOGGER,
             new RootStorageImpl(),
             B,
             1,
             CancellationToken.NONE
-        ))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("LP solver received LP-incompatible pattern");
+        );
+
+        assertThat(result).isEmpty();
     }
 
     @Test
