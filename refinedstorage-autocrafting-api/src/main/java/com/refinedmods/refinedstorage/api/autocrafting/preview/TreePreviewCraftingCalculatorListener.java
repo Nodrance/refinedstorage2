@@ -2,7 +2,6 @@ package com.refinedmods.refinedstorage.api.autocrafting.preview;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.Amount;
-import com.refinedmods.refinedstorage.api.autocrafting.calculation.CalculationException;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationException;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculator;
@@ -35,8 +34,6 @@ public class TreePreviewCraftingCalculatorListener implements CraftingCalculator
             return new TreePreview(PreviewType.CYCLE_DETECTED, null, e.getPattern().layout().outputs());
         } catch (final NumberOverflowDuringCalculationException e) {
             return new TreePreview(PreviewType.OVERFLOW, null, Collections.emptyList());
-        } catch (final CalculationException e) {
-            return new TreePreview(PreviewType.NOT_AVAILABLE, null, Collections.emptyList());
         } catch (final CancellationException e) {
             return new TreePreview(PreviewType.CANCELLED, null, Collections.emptyList());
         }

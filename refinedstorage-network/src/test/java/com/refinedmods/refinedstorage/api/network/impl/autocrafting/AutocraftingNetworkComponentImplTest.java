@@ -2,39 +2,28 @@ package com.refinedmods.refinedstorage.api.network.impl.autocrafting;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternBuilder;
-import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPlanningHelper;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewItem;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreviewNode;
 import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
-import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatusListener;
-import com.refinedmods.refinedstorage.api.autocrafting.task.ExternalPatternSinkProvider;
-import com.refinedmods.refinedstorage.api.autocrafting.task.StepBehavior;
-import com.refinedmods.refinedstorage.api.autocrafting.task.Task;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskId;
-import com.refinedmods.refinedstorage.api.autocrafting.task.TaskListener;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskState;
 import com.refinedmods.refinedstorage.api.core.Action;
 import com.refinedmods.refinedstorage.api.network.Network;
 import com.refinedmods.refinedstorage.api.network.autocrafting.AutocraftingNetworkComponent;
-import com.refinedmods.refinedstorage.api.network.autocrafting.PatternListener;
 import com.refinedmods.refinedstorage.api.network.impl.NetworkImpl;
 import com.refinedmods.refinedstorage.api.network.impl.node.patternprovider.PatternProviderNetworkNode;
 import com.refinedmods.refinedstorage.api.network.node.container.NetworkNodeContainer;
 import com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
-import com.refinedmods.refinedstorage.api.resource.ResourceKey;
-import com.refinedmods.refinedstorage.api.resource.list.MutableResourceList;
 import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.StorageImpl;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 import com.refinedmods.refinedstorage.network.test.fixtures.NetworkTestFixtures;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -328,14 +317,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(container);
 
         // Act
-        final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final Optional<TaskId> taskId = sut.startTask(B, 1, Actor.EMPTY, false, CancellationToken.NONE);
 
         // Assert
         assertThat(taskId).isPresent();
@@ -354,14 +336,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(container);
 
         // Act
-        final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            new CancelledCancellationToken(),
-            PlanningAlgorithm.LP
-        );
+        final Optional<TaskId> taskId = sut.startTask(B, 1, Actor.EMPTY, false, new CancelledCancellationToken());
 
         // Assert
         assertThat(taskId).isEmpty();
@@ -401,37 +376,12 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(() -> provider);
 
         // Act & assert
-        assertThat(startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        )).isPresent();
-        final var result = ensureTaskExpectingAlgorithm(
-            B,
-            10,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        assertThat(sut.startTask(B, 1, Actor.EMPTY, false, CancellationToken.NONE)).isPresent();
+        final var result = sut.ensureTask(B, 10, Actor.EMPTY, CancellationToken.NONE);
         assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_CREATED);
-        final var result2 = ensureTaskExpectingAlgorithm(
-            B,
-            10,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final var result2 = sut.ensureTask(B, 10, Actor.EMPTY, CancellationToken.NONE);
         assertThat(result2).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_ALREADY_RUNNING);
-        final var result3 = ensureTaskExpectingAlgorithm(
-            B,
-            9,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final var result3 = sut.ensureTask(B, 9, Actor.EMPTY, CancellationToken.NONE);
         assertThat(result3).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_ALREADY_RUNNING);
         assertThat(provider.getTasks()).hasSize(2)
             .anyMatch(t -> t.getAmount() == 9)
@@ -449,14 +399,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(() -> provider);
 
         // Act & assert
-        assertThat(startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            new CancelledCancellationToken(),
-            PlanningAlgorithm.LP
-        )).isEmpty();
+        assertThat(sut.startTask(B, 1, Actor.EMPTY, false, new CancelledCancellationToken())).isEmpty();
     }
 
     @Test
@@ -489,13 +432,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(() -> provider);
 
         // Act
-        final var result = ensureTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final var result = sut.ensureTask(B, 1, Actor.EMPTY, CancellationToken.NONE);
 
         // Assert
         assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.MISSING_RESOURCES);
@@ -513,13 +450,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(() -> provider);
 
         // Act
-        final var result = ensureTaskExpectingAlgorithm(
-            B,
-            11,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final var result = sut.ensureTask(B, 11, Actor.EMPTY, CancellationToken.NONE);
 
         // Assert
         assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_CREATED);
@@ -537,13 +468,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(() -> provider);
 
         // Act
-        final var result = ensureTaskExpectingAlgorithm(
-            B,
-            11,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final var result = sut.ensureTask(B, 11, Actor.EMPTY, CancellationToken.NONE);
 
         // Assert
         assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_CREATED);
@@ -561,23 +486,10 @@ class AutocraftingNetworkComponentImplTest {
         final NetworkNodeContainer container = () -> provider;
         sut.onContainerAdded(container);
 
-        startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        sut.startTask(B, 1, Actor.EMPTY, false, CancellationToken.NONE);
 
         // Act
-        final var result = ensureTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final var result = sut.ensureTask(B, 1, Actor.EMPTY, CancellationToken.NONE);
 
         // Assert
         assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_ALREADY_RUNNING);
@@ -601,22 +513,8 @@ class AutocraftingNetworkComponentImplTest {
         provider2.setPattern(1, pattern().ingredient(A, 3).output(C, 1).build());
         sut.onContainerAdded(() -> provider2);
 
-        final Optional<TaskId> taskId1 = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-        final Optional<TaskId> taskId2 = startTaskExpectingAlgorithm(
-            C,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final Optional<TaskId> taskId1 = sut.startTask(B, 1, Actor.EMPTY, false, CancellationToken.NONE);
+        final Optional<TaskId> taskId2 = sut.startTask(C, 1, Actor.EMPTY, false, CancellationToken.NONE);
 
         assertThat(taskId1).isPresent();
         assertThat(taskId2).isPresent();
@@ -668,22 +566,8 @@ class AutocraftingNetworkComponentImplTest {
         provider2.setPattern(1, pattern().ingredient(A, 3).output(C, 1).build());
         sut.onContainerAdded(() -> provider2);
 
-        final Optional<TaskId> taskId1 = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-        final Optional<TaskId> taskId2 = startTaskExpectingAlgorithm(
-            C,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final Optional<TaskId> taskId1 = sut.startTask(B, 1, Actor.EMPTY, false, CancellationToken.NONE);
+        final Optional<TaskId> taskId2 = sut.startTask(C, 1, Actor.EMPTY, false, CancellationToken.NONE);
 
         assertThat(taskId1).isPresent();
         assertThat(taskId2).isPresent();
@@ -728,14 +612,7 @@ class AutocraftingNetworkComponentImplTest {
         sut.onContainerAdded(container);
 
         // Act
-        final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
-            B,
-            2,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final Optional<TaskId> taskId = sut.startTask(B, 2, Actor.EMPTY, false, CancellationToken.NONE);
 
         // Assert
         assertThat(taskId).isEmpty();
@@ -760,31 +637,10 @@ class AutocraftingNetworkComponentImplTest {
         provider3.setPattern(1, pattern().ingredient(A, 3).output(D, 1).build());
         sut.onContainerAdded(() -> provider3);
 
-        final Optional<TaskId> taskId1 = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-        final Optional<TaskId> taskId2 = startTaskExpectingAlgorithm(
-            C,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        final Optional<TaskId> taskId1 = sut.startTask(B, 1, Actor.EMPTY, false, CancellationToken.NONE);
+        final Optional<TaskId> taskId2 = sut.startTask(C, 1, Actor.EMPTY, false, CancellationToken.NONE);
 
-        startTaskExpectingAlgorithm(
-            D,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
+        sut.startTask(D, 1, Actor.EMPTY, false, CancellationToken.NONE);
         sut.onContainerRemoved(() -> provider3);
 
         // Act
@@ -801,265 +657,6 @@ class AutocraftingNetworkComponentImplTest {
             .anyMatch(ts -> ts.info().id().equals(taskId2.get()));
     }
 
-    @Test
-    void shouldReturnNotAvailablePreviewWhenExecutorRejects() {
-        final var rejectedExecutor = Executors.newSingleThreadExecutor();
-        rejectedExecutor.shutdownNow();
-        final var localSut = new AutocraftingNetworkComponentImpl(() -> rootStorage, rejectedExecutor);
-
-        final Optional<Preview> preview = localSut.getPreview(B, 1, CancellationToken.NONE).join();
-
-        assertThat(preview).isPresent();
-        assertThat(preview.get().type()).isEqualTo(PreviewType.NOT_AVAILABLE);
-    }
-
-    @Test
-    void shouldReturnNotAvailableTreePreviewWhenExecutorRejects() {
-        final var rejectedExecutor = Executors.newSingleThreadExecutor();
-        rejectedExecutor.shutdownNow();
-        final var localSut = new AutocraftingNetworkComponentImpl(() -> rootStorage, rejectedExecutor);
-
-        final Optional<TreePreview> preview = localSut.getTreePreview(B, 1, CancellationToken.NONE).join();
-
-        assertThat(preview).isPresent();
-        assertThat(preview.get().type()).isEqualTo(PreviewType.NOT_AVAILABLE);
-    }
-
-    @Test
-    void shouldStartTaskWithLpForFuzzyRecipe() {
-        rootStorage.addSource(new StorageImpl());
-        rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
-        rootStorage.insert(B, 1, Action.EXECUTE, Actor.EMPTY);
-
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, pattern().ingredient(1).input(A).input(B).end().output(C, 1).build());
-        sut.onContainerAdded(() -> provider);
-
-        // LP system now handles fuzzy recipes through subset expansion
-        final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
-            C,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-
-        assertThat(taskId).isPresent();
-        assertThat(provider.getTasks()).hasSize(1);
-    }
-
-    @Test
-    void shouldEnsureTaskWithLpForFuzzyRecipe() {
-        rootStorage.addSource(new StorageImpl());
-        rootStorage.insert(A, 3, Action.EXECUTE, Actor.EMPTY);
-        rootStorage.insert(B, 3, Action.EXECUTE, Actor.EMPTY);
-
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, pattern().ingredient(1).input(A).input(B).end().output(C, 1).build());
-        sut.onContainerAdded(() -> provider);
-
-        // LP system now handles fuzzy recipes through subset expansion
-        final var result = ensureTaskExpectingAlgorithm(
-            C,
-            2,
-            Actor.EMPTY,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-
-        assertThat(result).isEqualTo(AutocraftingNetworkComponent.EnsureResult.TASK_CREATED);
-        assertThat(provider.getTasks()).hasSize(1);
-    }
-
-    @Test
-    void shouldNotReadTaskStatusWhenNoListenersAreRegistered() {
-        final Task throwingTask = new StatusThrowingTask();
-
-        sut.taskChanged(throwingTask);
-    }
-
-    @Test
-    void shouldReadTaskStatusWhenListenerIsRegistered() {
-        final boolean[] changed = {false};
-        sut.addListener(new TaskStatusListener() {
-            @Override
-            public void taskAdded(final TaskStatus taskStatus) {
-            }
-
-            @Override
-            public void taskRemoved(final TaskId taskId) {
-            }
-
-            @Override
-            public void taskStatusChanged(final TaskStatus status) {
-                changed[0] = true;
-            }
-        });
-
-        rootStorage.addSource(new StorageImpl());
-        rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 1).build());
-        sut.onContainerAdded(() -> provider);
-
-        final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-        assertThat(taskId).isPresent();
-
-        final var task = provider.getTasks().getFirst();
-        sut.taskChanged(task);
-
-        assertThat(changed[0]).isTrue();
-    }
-
-    @Test
-    void shouldExposePatternsAndPatternsByOutput() {
-        final Pattern patternAB = pattern().ingredient(A, 1).output(B, 1).build();
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, patternAB);
-        sut.onContainerAdded(() -> provider);
-
-        assertThat(sut.getPatterns()).contains(patternAB);
-        assertThat(sut.getPatternsByOutput(B)).contains(patternAB);
-    }
-
-    @Test
-    void shouldNotifyPatternListenersOnAddAndRemove() {
-        final List<Pattern> added = new ArrayList<>();
-        final List<Pattern> removed = new ArrayList<>();
-        sut.addListener(new PatternListener() {
-            @Override
-            public void onAdded(final Pattern pattern) {
-                added.add(pattern);
-            }
-
-            @Override
-            public void onRemoved(final Pattern pattern) {
-                removed.add(pattern);
-            }
-        });
-
-        final Pattern patternAB = pattern().ingredient(A, 1).output(B, 1).build();
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, patternAB);
-
-        sut.onContainerAdded(() -> provider);
-        sut.onContainerRemoved(() -> provider);
-
-        assertThat(added).contains(patternAB);
-        assertThat(removed).contains(patternAB);
-    }
-
-    @Test
-    void shouldNotifyTaskStatusListenersOnTaskAddedAndRemoved() {
-        final List<TaskStatus> added = new ArrayList<>();
-        final List<TaskId> removed = new ArrayList<>();
-        sut.addListener(new TaskStatusListener() {
-            @Override
-            public void taskAdded(final TaskStatus taskStatus) {
-                added.add(taskStatus);
-            }
-
-            @Override
-            public void taskRemoved(final TaskId taskId) {
-                removed.add(taskId);
-            }
-
-            @Override
-            public void taskStatusChanged(final TaskStatus status) {
-            }
-        });
-
-        rootStorage.addSource(new StorageImpl());
-        rootStorage.insert(A, 2, Action.EXECUTE, Actor.EMPTY);
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 1).build());
-        sut.onContainerAdded(() -> provider);
-
-        final Optional<TaskId> taskId = startTaskExpectingAlgorithm(
-            B,
-            1,
-            Actor.EMPTY,
-            false,
-            CancellationToken.NONE,
-            PlanningAlgorithm.LP
-        );
-
-        assertThat(taskId).isPresent();
-        assertThat(added).isNotEmpty();
-
-        sut.cancel(taskId.get());
-        provider.setActive(true);
-        provider.setNetwork(network);
-        provider.doWork();
-        provider.doWork();
-
-        assertThat(removed).contains(taskId.get());
-    }
-
-    @Test
-    void shouldUpdatePatternPriorityOrdering() {
-        final Pattern lowPriority = pattern().ingredient(A, 1).output(B, 1).build();
-        final Pattern highPriority = pattern().ingredient(C, 1).output(B, 1).build();
-        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
-        provider.setPattern(1, lowPriority);
-        provider.setPattern(2, highPriority);
-        sut.onContainerAdded(() -> provider);
-
-        sut.update(highPriority, 100);
-
-        assertThat(sut.getPatternsByOutput(B).getFirst()).isEqualTo(highPriority);
-    }
-
-    private Optional<TaskId> startTaskExpectingAlgorithm(final ResourceKey resource,
-                                                         final long amount,
-                                                         final Actor actor,
-                                                         final boolean notify,
-                                                         final CancellationToken cancellationToken,
-                                                         final PlanningAlgorithm expectedAlgorithm) {
-        assertThat(determinePlanningAlgorithm(resource)).isEqualTo(expectedAlgorithm);
-        return sut.startTask(resource, amount, actor, notify, cancellationToken);
-    }
-
-    private AutocraftingNetworkComponent.EnsureResult ensureTaskExpectingAlgorithm(
-        final ResourceKey resource,
-        final long amount,
-        final Actor actor,
-        final CancellationToken cancellationToken,
-        final PlanningAlgorithm expectedAlgorithm
-    ) {
-        assertThat(determinePlanningAlgorithm(resource)).isEqualTo(expectedAlgorithm);
-        return sut.ensureTask(resource, amount, actor, cancellationToken);
-    }
-
-    private PlanningAlgorithm determinePlanningAlgorithm(final ResourceKey resource) {
-        return invokeShouldUseLpSystem(resource) ? PlanningAlgorithm.LP : PlanningAlgorithm.TRADITIONAL;
-    }
-
-    private boolean invokeShouldUseLpSystem(final ResourceKey resource) {
-        try {
-            final var field = AutocraftingNetworkComponentImpl.class.getDeclaredField("patternRepository");
-            field.setAccessible(true);
-            final var patternRepository = field.get(sut);
-            final var repo = (PatternRepository) patternRepository;
-            return LpPlanningHelper.shouldUseLPSystem(resource, rootStorage, repo);
-        } catch (final NoSuchFieldException | IllegalAccessException e) {
-            throw new AssertionError("Unable to determine selected planning algorithm", e);
-        }
-    }
-
-    private enum PlanningAlgorithm {
-        TRADITIONAL,
-        LP
-    }
-
     private static class CancelledCancellationToken implements CancellationToken {
         @Override
         public boolean isCancelled() {
@@ -1069,69 +666,6 @@ class AutocraftingNetworkComponentImplTest {
         @Override
         public void cancel() {
             // no op
-        }
-    }
-
-    private static class StatusThrowingTask implements Task {
-        @Override
-        public Actor getActor() {
-            return Actor.EMPTY;
-        }
-
-        @Override
-        public boolean shouldNotify() {
-            return false;
-        }
-
-        @Override
-        public ResourceKey getResource() {
-            return B;
-        }
-
-        @Override
-        public long getAmount() {
-            return 1;
-        }
-
-        @Override
-        public TaskId getId() {
-            return TaskId.create();
-        }
-
-        @Override
-        public TaskState getState() {
-            return TaskState.READY;
-        }
-
-        @Override
-        public boolean step(final RootStorage storage,
-                            final ExternalPatternSinkProvider sinkProvider,
-                            final StepBehavior stepBehavior,
-                            final TaskListener listener) {
-            return false;
-        }
-
-        @Override
-        public void cancel() {
-        }
-
-        @Override
-        public TaskStatus getStatus() {
-            throw new AssertionError("Status should not be requested when there are no listeners");
-        }
-
-        @Override
-        public long beforeInsert(final ResourceKey insertedResource, final long insertedAmount) {
-            return 0;
-        }
-
-        @Override
-        public long afterInsert(final ResourceKey insertedResource, final long insertedAmount) {
-            return 0;
-        }
-
-        @Override
-        public void changed(final MutableResourceList.OperationResult change) {
         }
     }
 }

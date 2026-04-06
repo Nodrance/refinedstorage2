@@ -92,9 +92,6 @@ public class TaskContainer {
     public void step(final Network network, final StepBehavior stepBehavior, final TaskListener listener) {
         final StorageNetworkComponent storage = network.getComponent(StorageNetworkComponent.class);
         final ExternalPatternSinkProvider sinkProvider = network.getComponent(AutocraftingNetworkComponent.class);
-        // Take an immutable snapshot before iterating. Tasks may add new tasks to this container
-        // during their step (e.g. LpStepDispatcher dispatches sub-tasks), which would cause a
-        // ConcurrentModificationException with removeIf on CopyOnWriteArrayList.
         final List<Task> snapshot = List.copyOf(tasks);
         for (final Task task : snapshot) {
             if (step(task, storage, sinkProvider, stepBehavior, listener)) {
