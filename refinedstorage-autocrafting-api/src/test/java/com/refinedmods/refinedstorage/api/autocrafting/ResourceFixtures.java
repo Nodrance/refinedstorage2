@@ -6,6 +6,7 @@ public enum ResourceFixtures implements ResourceKey {
     A,
     B,
     C,
+    D,
     X,
     Y,
     SPRUCE_LOG,

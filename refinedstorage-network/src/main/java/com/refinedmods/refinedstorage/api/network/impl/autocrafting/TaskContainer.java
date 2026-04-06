@@ -92,7 +92,12 @@ public class TaskContainer {
     public void step(final Network network, final StepBehavior stepBehavior, final TaskListener listener) {
         final StorageNetworkComponent storage = network.getComponent(StorageNetworkComponent.class);
         final ExternalPatternSinkProvider sinkProvider = network.getComponent(AutocraftingNetworkComponent.class);
-        tasks.removeIf(task -> step(task, storage, sinkProvider, stepBehavior, listener));
+        final List<Task> snapshot = List.copyOf(tasks);
+        for (final Task task : snapshot) {
+            if (step(task, storage, sinkProvider, stepBehavior, listener)) {
+                tasks.remove(task);
+            }
+        }
     }
 
     private boolean step(final Task task,

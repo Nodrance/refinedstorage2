@@ -22,6 +22,7 @@ dependencies {
     api(project(":refinedstorage-storage-api"))
     api(project(":refinedstorage-query-parser"))
     implementation(libs.slf4j.api)
+    api("org.ojalgo:ojalgo:${property("ojalgoVersion")}")
     testImplementation(libs.junit.api)
     testImplementation(libs.junit.params)
     testImplementation(libs.assertj)
