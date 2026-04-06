@@ -210,8 +210,8 @@ public final class LpCraftingSolver {
     public CycleEliminationResult findExecutableSolutionViaCycleElimination(final List<LpPatternRecipe> recipes,
                                                                             final LpResourceSet startingResources,
                                                                             final LpResourceSet target) {
-        LOGGER.info("[LP] Starting cycle elimination for {} recipes.", recipes.size());
         validateInputs(recipes, startingResources, target);
+        LOGGER.info("[LP] Starting cycle elimination for {} recipes.", recipes.size());
 
         final ArrayDeque<Set<UUID>> attempts = new ArrayDeque<>();
         attempts.push(Set.of());
