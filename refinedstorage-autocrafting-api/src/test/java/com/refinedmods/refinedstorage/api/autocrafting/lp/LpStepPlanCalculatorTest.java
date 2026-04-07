@@ -104,6 +104,39 @@ class LpStepPlanCalculatorTest {
     }
 
     @Test
+    void shouldPlanSelfConsumingRecipeAsThreeOrderedSteps() {
+        // Recipe A+B→2A is self-consuming: A is both an input and an output.
+        // Starting with 1A and excess B, targeting 4 more A, the LP planner must break
+        // the plan into steps that never consume more A than is currently on hand:
+        //   step 1: apply once  (1A+1B → 2A)  — only 1A available
+        //   step 2: apply twice (2A+2B → 4A)  — now 2A available
+        //   step 3: apply once  (1A+1B → 2A)  — only 1 more iteration needed
+        final Pattern selfConsuming = pattern().ingredient(A, 1).ingredient(B, 1).output(A, 2).build();
+        final RootStorage storage = new RootStorageImpl();
+        final StorageImpl source = new StorageImpl();
+        source.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
+        source.insert(B, 10, Action.EXECUTE, Actor.EMPTY);
+        storage.addSource(source);
+
+        final Optional<LpStepPlan> result = LpStepPlanCalculator.calculateSteps(
+            List.of(selfConsuming),
+            LOGGER,
+            storage,
+            A,
+            4,
+            CancellationToken.NONE
+        );
+
+        assertThat(result).isPresent();
+        final LpStepPlan plan = result.get();
+        assertThat(plan.hasRecipeCycles()).isTrue();
+        assertThat(plan.steps()).hasSize(3);
+        assertThat(plan.steps().get(0).iterations()).isEqualTo(1);
+        assertThat(plan.steps().get(1).iterations()).isEqualTo(2);
+        assertThat(plan.steps().get(2).iterations()).isEqualTo(1);
+    }
+
+    @Test
     void shouldReturnEmptyForFuzzyPatternWithNoViableInputs() {
         // Fuzzy pattern with no resources in storage and no sub-patterns:
         // all ingredient options are pruned, recipe is dropped, result is empty.
