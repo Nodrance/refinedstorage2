@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 
 public final class LpPreviewCalculator {
     private static final Logger LOGGER = LoggerFactory.getLogger(LpPreviewCalculator.class);
+
     private LpPreviewCalculator() {
     }
 
@@ -36,62 +37,98 @@ public final class LpPreviewCalculator {
         Objects.requireNonNull(resource, "resource cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
 
+        final Preview preview;
         if (cancellationToken.isCancelled()) {
             LOGGER.info("[LP] Preview calculation cancelled by token.");
-            return cancelled();
-        }
-
-        final LpResourceSet startingResources = LpResourceSet.fromResourceAmounts(rootStorage.getAll());
-        LOGGER.info("[LP] Starting resources: {}", startingResources);
-        final LpFuzzyExpander.FuzzyExpansionResult expansionResult = LpFuzzyExpander.expandFuzzyPatterns(
-            patterns,
-            startingResources,
-            LpFuzzyExpander.collectCraftableResources(patterns)
-        );
-        LOGGER.info("[LP] Fuzzy expansion result: {} recipes, {} variant mappings", expansionResult.expandedRecipes().size(), expansionResult.variantToSourcePattern().size());
-        if (expansionResult.expandedRecipes().isEmpty()) {
-            LOGGER.info("[LP] No expanded recipes available for preview.");
-            return notAvailable();
-        }
-
-        final LpResourceSet augmentedStartingResources = LpFuzzyExpander.augmentStartingResources(
-            startingResources,
-            expansionResult.createdSubsets()
-        );
-        LOGGER.info("[LP] Augmented starting resources: {}", augmentedStartingResources);
-        final LpResourceSet target = new LpResourceSet();
-        target.setAmount(resource, rootStorage.get(resource) + amount);
-        LOGGER.info("[LP] Target resource set: {}", target);
-
-        final LpCraftingSolver.PlanningOutcome outcome = new LpCraftingSolver().solve(
-            expansionResult.expandedRecipes(),
-            augmentedStartingResources,
-            target
-        );
-        LOGGER.info("[LP] Planning outcome: maxCraftableAmount={}, executableResultPresent={}, requiredBaseItems={}", outcome.maxCraftableAmount(), outcome.executableResult().isPresent(), outcome.requiredBaseItems());
-
-        if (cancellationToken.isCancelled()) {
-            LOGGER.info("[LP] Preview calculation cancelled by token after planning.");
-            return cancelled();
-        }
-
-        if (outcome.executableResult().isPresent()) {
-            LOGGER.info("[LP] Preview calculation successful, returning success preview.");
-            return buildSuccessPreview(
-                outcome.executableResult().get().plan(),
-                expansionResult.variantToSourcePattern(),
+            preview = cancelled();
+        } else {
+            final LpResourceSet startingResources = LpResourceSet.fromResourceAmounts(rootStorage.getAll());
+            LOGGER.info("[LP] Starting resources: {}", startingResources);
+            final LpFuzzyExpander.FuzzyExpansionResult expansionResult = LpFuzzyExpander.expandFuzzyPatterns(
                 patterns,
-                startingResources
+                startingResources,
+                LpFuzzyExpander.collectCraftableResources(patterns)
+            );
+            LOGGER.info(
+                "[LP] Fuzzy expansion result: {} recipes, {} variant mappings",
+                expansionResult.expandedRecipes().size(),
+                expansionResult.variantToSourcePattern().size()
+            );
+            preview = buildPreview(
+                patterns,
+                rootStorage,
+                resource,
+                amount,
+                cancellationToken,
+                startingResources,
+                expansionResult
             );
         }
+        return preview;
+    }
 
-        if (!outcome.requiredBaseItems().isEmpty()) {
-            LOGGER.info("[LP] Preview calculation found missing base items: {}", outcome.requiredBaseItems());
-            return buildMissingPreview(patterns, resource, amount, startingResources, outcome.requiredBaseItems());
+    private static Preview buildPreview(final Collection<Pattern> patterns,
+                                        final RootStorage rootStorage,
+                                        final ResourceKey resource,
+                                        final long amount,
+                                        final CancellationToken cancellationToken,
+                                        final LpResourceSet startingResources,
+                                        final LpFuzzyExpander.FuzzyExpansionResult expansionResult) {
+        final Preview preview;
+        if (expansionResult.expandedRecipes().isEmpty()) {
+            LOGGER.info("[LP] No expanded recipes available for preview.");
+            preview = notAvailable();
+        } else {
+            final LpResourceSet augmentedStartingResources = LpFuzzyExpander.augmentStartingResources(
+                startingResources,
+                expansionResult.createdSubsets()
+            );
+            LOGGER.info("[LP] Augmented starting resources: {}", augmentedStartingResources);
+            final LpResourceSet target = new LpResourceSet();
+            target.setAmount(resource, rootStorage.get(resource) + amount);
+            LOGGER.info("[LP] Target resource set: {}", target);
+
+            final LpCraftingSolver.PlanningOutcome outcome = new LpCraftingSolver().solve(
+                expansionResult.expandedRecipes(),
+                augmentedStartingResources,
+                target
+            );
+            LOGGER.info(
+                "[LP] Planning outcome: maxCraftableAmount={}, executableResultPresent={}, requiredBaseItems={}",
+                outcome.maxCraftableAmount(),
+                outcome.executableResult().isPresent(),
+                outcome.requiredBaseItems()
+            );
+
+            if (cancellationToken.isCancelled()) {
+                LOGGER.info("[LP] Preview calculation cancelled by token after planning.");
+                preview = cancelled();
+            } else if (outcome.executableResult().isPresent()) {
+                LOGGER.info("[LP] Preview calculation successful, returning success preview.");
+                preview = buildSuccessPreview(
+                    outcome.executableResult().get().plan(),
+                    expansionResult.variantToSourcePattern(),
+                    patterns,
+                    startingResources
+                );
+            } else if (!outcome.requiredBaseItems().isEmpty()) {
+                LOGGER.info(
+                    "[LP] Preview calculation found missing base items: {}",
+                    outcome.requiredBaseItems()
+                );
+                preview = buildMissingPreview(
+                    patterns,
+                    resource,
+                    amount,
+                    startingResources,
+                    outcome.requiredBaseItems()
+                );
+            } else {
+                LOGGER.info("[LP] Preview calculation not available for resource: {}", resource);
+                preview = notAvailable();
+            }
         }
-
-        LOGGER.info("[LP] Preview calculation not available for resource: {}", resource);
-        return notAvailable();
+        return preview;
     }
 
     private static Preview buildSuccessPreview(final List<LpExecutionPlanStep> rawSteps,
@@ -99,8 +136,12 @@ public final class LpPreviewCalculator {
                                                final Collection<Pattern> patterns,
                                                final LpResourceSet startingResources) {
         LOGGER.info("[LP] Building success preview. Steps: {}", rawSteps.size());
-        final List<LpExecutionPlanStep> steps = decodeStepsIfNeeded(rawSteps, variantToSourcePattern, patterns,
-            startingResources);
+        final List<LpExecutionPlanStep> steps = decodeStepsIfNeeded(
+            rawSteps,
+            variantToSourcePattern,
+            patterns,
+            startingResources
+        );
         final PreviewBuilder builder = PreviewBuilder.create();
         final LpResourceSet remainingStorage = startingResources.copy();
 
@@ -135,7 +176,10 @@ public final class LpPreviewCalculator {
         for (final Pattern pattern : patterns) {
             patternsById.put(pattern.id(), pattern);
         }
-        LOGGER.info("[LP] Decoding plan steps for fuzzy variants. Variant mappings: {}", variantToSourcePattern.size());
+        LOGGER.info(
+            "[LP] Decoding plan steps for fuzzy variants. Variant mappings: {}",
+            variantToSourcePattern.size()
+        );
         return LpFuzzyExpander.decodePlanSteps(rawSteps, variantToSourcePattern, patternsById, startingResources);
     }
 
@@ -144,9 +188,17 @@ public final class LpPreviewCalculator {
                                                final long requestedAmount,
                                                final LpResourceSet startingResources,
                                                final LpResourceSet requiredBaseItems) {
-        LOGGER.info("[LP] Building missing preview for resource: {}. Required base items: {}", requestedResource, requiredBaseItems);
+        LOGGER.info(
+            "[LP] Building missing preview for resource: {}. Required base items: {}",
+            requestedResource,
+            requiredBaseItems
+        );
         final PreviewBuilder builder = PreviewBuilder.create();
-        final long displayedCraftAmount = resolveDisplayedCraftAmount(patterns, requestedResource, requestedAmount);
+        final long displayedCraftAmount = resolveDisplayedCraftAmount(
+            patterns,
+            requestedResource,
+            requestedAmount
+        );
         builder.addToCraft(requestedResource, displayedCraftAmount);
 
         for (final var entry : requiredBaseItems) {
@@ -206,3 +258,4 @@ public final class LpPreviewCalculator {
         return new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList());
     }
 }
+

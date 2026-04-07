@@ -2,6 +2,14 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Comparator;
@@ -13,26 +21,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
 
 import org.ojalgo.optimisation.Expression;
 import org.ojalgo.optimisation.ExpressionsBasedModel;
 import org.ojalgo.optimisation.Optimisation;
 import org.ojalgo.optimisation.Variable;
-
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -405,8 +402,13 @@ public final class LpCraftingSolver {
     }
 
     private static final class FlowSearchModel {
-        // Logger is not static to allow for context if needed in future
-        private final Logger logger = LoggerFactory.getLogger(FlowSearchModel.class);
+        private static final Logger LOGGER = LoggerFactory.getLogger(FlowSearchModel.class);
+        private static final long MODEL_CREATION_TIMEOUT_SECONDS = 10;
+        private static final long SOLVE_TIMEOUT_SECONDS = Long.getLong(
+            "refinedstorage.lp.solveTimeoutSeconds",
+            30L
+        );
+        private static final DateTimeFormatter THREAD_DUMP_TIMESTAMP_FORMATTER = DateTimeFormatter.ISO_INSTANT;
         private final List<LpPatternRecipe> recipes;
         private final List<LpPatternRecipe> reversePriorityRecipes;
         private final Set<ResourceKey> relevantResources;
@@ -415,12 +417,6 @@ public final class LpCraftingSolver {
         private final Set<ResourceKey> constrainedResources;
         private final Set<UUID> disabledRecipeIds;
         private final LpSolverOptions options;
-        private static final long MODEL_CREATION_TIMEOUT_SECONDS = 10;
-        private static final long SOLVE_TIMEOUT_SECONDS = Long.getLong(
-            "refinedstorage.lp.solveTimeoutSeconds",
-            30L
-        );
-        private static final DateTimeFormatter THREAD_DUMP_TIMESTAMP_FORMATTER = DateTimeFormatter.ISO_INSTANT;
 
         private FlowSearchModel(final List<LpPatternRecipe> recipes,
                                 final Set<ResourceKey> relevantResources,
@@ -482,7 +478,9 @@ public final class LpCraftingSolver {
                                                     final UUID objectiveRecipeId,
                                                     final boolean maximize,
                                                     final Map<UUID, Long> lockedRecipeValues) {
-            LOGGER.info("[LP] Solving with objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+            LOGGER.info(
+                "[LP] Solving with objectiveResource={}, objectiveRecipeId={}, maximize={}, "
+                    + "lockedRecipeValues={}",
                 objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues);
 
             final FutureTask<FlowSearchResult> solveTask = new FutureTask<>(
@@ -496,7 +494,8 @@ public final class LpCraftingSolver {
                 return solveTask.get(SOLVE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             } catch (final TimeoutException e) {
                 LOGGER.error(
-                    "[LP] Timed out solveWithObjective after {} seconds. objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+                    "[LP] Timed out solveWithObjective after {} seconds. objectiveResource={}, "
+                        + "objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
                     SOLVE_TIMEOUT_SECONDS,
                     objectiveResource,
                     objectiveRecipeId,
@@ -520,22 +519,38 @@ public final class LpCraftingSolver {
                                                             final UUID objectiveRecipeId,
                                                             final boolean maximize,
                                                             final Map<UUID, Long> lockedRecipeValues) {
-            LOGGER.info("[LP] Entered solveWithObjectiveInternal on thread {}", Thread.currentThread().getName());
+            LOGGER.info(
+                "[LP] Entered solveWithObjectiveInternal on thread {}",
+                Thread.currentThread().getName()
+            );
 
             final ExpressionsBasedModel model = createModelWithDiagnostics();
 
             LOGGER.info("[LP] Creating recipe vars");
             final Map<UUID, Variable> variableByRecipeId = createRecipeVariables(model);
-            LOGGER.info("[LP] Created model with {} variables for objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
-                variableByRecipeId.size(), objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues);
+            LOGGER.info(
+                "[LP] Created model with {} variables for objectiveResource={}, objectiveRecipeId={}, "
+                    + "maximize={}, lockedRecipeValues={}",
+                variableByRecipeId.size(),
+                objectiveResource,
+                objectiveRecipeId,
+                maximize,
+                lockedRecipeValues
+            );
             configureObjective(model, variableByRecipeId, objectiveResource, objectiveRecipeId);
             LOGGER.info("[LP] Adding constraints");
             addResourceConstraints(model, variableByRecipeId);
             LOGGER.info("[LP] Adding recipe locks");
             addRecipeLocks(model, variableByRecipeId, lockedRecipeValues);
 
-            LOGGER.info("[LP] Solving model with objectiveResource={}, objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
-                objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues);
+            LOGGER.info(
+                "[LP] Solving model with objectiveResource={}, objectiveRecipeId={}, maximize={}, "
+                    + "lockedRecipeValues={}",
+                objectiveResource,
+                objectiveRecipeId,
+                maximize,
+                lockedRecipeValues
+            );
             final Optimisation.Result result = maximize ? model.maximise() : model.minimise();
             LOGGER.info("[LP] Solver result: {}", result);
             if (!result.getState().isFeasible()) {
@@ -559,7 +574,11 @@ public final class LpCraftingSolver {
                 ? "unknown"
                 : String.valueOf(ExpressionsBasedModel.class.getProtectionDomain().getCodeSource().getLocation());
 
-            LOGGER.info("[LP] Creating ExpressionsBasedModel with classLoader={} codeSource={}", classLoaderName, codeSource);
+            LOGGER.info(
+                "[LP] Creating ExpressionsBasedModel with classLoader={} codeSource={}",
+                classLoaderName,
+                codeSource
+            );
 
             final FutureTask<ExpressionsBasedModel> task = new FutureTask<>(ExpressionsBasedModel::new);
             final Thread modelConstructionThread = new Thread(task, "lp-ojalgo-model-construction");

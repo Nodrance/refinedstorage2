@@ -12,6 +12,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.task.Task;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskId;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskPlan;
+import com.refinedmods.refinedstorage.api.core.CoreValidations;
 import com.refinedmods.refinedstorage.api.network.autocrafting.AutocraftingNetworkComponent;
 import com.refinedmods.refinedstorage.api.network.autocrafting.PatternProvider;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
@@ -49,6 +50,27 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
                 amount,
                 cancellationToken
             ));
+        }, state.getExecutorService());
+    }
+
+    @Override
+    public CompletableFuture<Long> getMaxAmount(final ResourceKey resource,
+                                                final CancellationToken cancellationToken) {
+        CoreValidations.validateNotNull(resource, "Resource cannot be null");
+        return CompletableFuture.supplyAsync(() -> {
+            if (cancellationToken.isCancelled()) {
+                return 0L;
+            }
+            final RootStorage rootStorage = state.getRootStorageProvider().get();
+            final Collection<Pattern> relevantPatterns =
+                LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, state.getPatternRepository());
+            return LpStepPlanCalculator.calculateMaxAmount(
+                relevantPatterns,
+                LOGGER,
+                rootStorage,
+                resource,
+                Long.MAX_VALUE
+            );
         }, state.getExecutorService());
     }
 
@@ -110,12 +132,14 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             ));
     }
 
-    private AutocraftingNetworkComponent.EnsureResult ensureTaskForCraftableAmountViaLp(final Collection<Pattern> relevantPatterns,
-                                                                                         final RootStorage rootStorage,
-                                                                                         final ResourceKey resource,
-                                                                                         final long amount,
-                                                                                         final Actor actor,
-                                                                                         final CancellationToken cancellationToken) {
+    private AutocraftingNetworkComponent.EnsureResult ensureTaskForCraftableAmountViaLp(
+        final Collection<Pattern> relevantPatterns,
+        final RootStorage rootStorage,
+        final ResourceKey resource,
+        final long amount,
+        final Actor actor,
+        final CancellationToken cancellationToken
+    ) {
         if (cancellationToken.isCancelled()) {
             return AutocraftingNetworkComponent.EnsureResult.MISSING_RESOURCES;
         }
@@ -139,7 +163,9 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             correctedAmount,
             cancellationToken
         )
-            .flatMap(steps -> addLpDispatcherTask(resource, correctedAmount, actor, steps, false))
+            .flatMap(
+                steps -> addLpDispatcherTask(resource, correctedAmount, actor, steps, false)
+            )
             .map(taskId -> AutocraftingNetworkComponent.EnsureResult.TASK_CREATED)
             .orElse(AutocraftingNetworkComponent.EnsureResult.MISSING_RESOURCES);
     }
@@ -231,3 +257,4 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
         return Optional.of(dispatcher.getId());
     }
 }
+

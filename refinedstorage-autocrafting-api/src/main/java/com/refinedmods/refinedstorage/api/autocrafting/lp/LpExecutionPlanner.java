@@ -163,7 +163,7 @@ public final class LpExecutionPlanner {
 
         applyRecipeBatch(candidate.recipe, batch, inventory);
         remainingCounts.put(candidate.recipe.uniqueId(), candidate.remaining - batch);
-        appendOrMergePlanStep(plan, candidate.recipe, batch);
+        appendOrMergePlanStep(plan, candidate.recipe, batch, inLoopById);
 
         final boolean success = recursivelyBacksolvePlan(
             recipes,
@@ -223,9 +223,12 @@ public final class LpExecutionPlanner {
 
     private static void appendOrMergePlanStep(final List<LpExecutionPlanStep> plan,
                                               final LpPatternRecipe recipe,
-                                              final long batch) {
+                                              final long batch,
+                                              final Map<UUID, Boolean> inLoopById) {
         // Appends a new plan step or merges it with the last step if it's the same recipe.
-        if (!plan.isEmpty()) {
+        // Cycle recipes are never merged so their ordered steps are preserved.
+        final boolean inLoop = inLoopById.getOrDefault(recipe.uniqueId(), false);
+        if (!inLoop && !plan.isEmpty()) {
             final LpExecutionPlanStep last = plan.getLast();
             if (last.recipe().uniqueId().equals(recipe.uniqueId())) {
                 plan.set(plan.size() - 1, new LpExecutionPlanStep(recipe, last.iterations() + batch));

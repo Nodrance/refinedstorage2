@@ -299,7 +299,7 @@ final class LpRecipeAnalysis {
                                                 final List<List<Integer>> cycles) {
         // Recursively finds cycles
         for (final int next : adjacency.get(current)) {
-            if (next == start && path.size() > 1) {
+            if (next == start) {
                 final List<Integer> canonical = canonicalizeCycle(path);
                 if (seenCycles.add(canonical)) {
                     cycles.add(canonical);

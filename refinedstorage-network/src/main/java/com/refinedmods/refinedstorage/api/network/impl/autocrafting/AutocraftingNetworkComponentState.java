@@ -242,3 +242,4 @@ final class AutocraftingNetworkComponentState {
         return task.getId();
     }
 }
+

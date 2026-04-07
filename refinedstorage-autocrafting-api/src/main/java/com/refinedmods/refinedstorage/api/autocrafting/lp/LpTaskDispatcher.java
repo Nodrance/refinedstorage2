@@ -71,7 +71,13 @@ public final class LpTaskDispatcher extends TaskImpl {
                         final ExternalPatternSinkProvider sinkProvider,
                         final StepBehavior stepBehavior,
                         final TaskListener listener) {
-        LOGGER.info("[LP] step() called. State: {}, Cancelled: {}, PendingSteps: {}, ActiveSubTasks: {}", state, cancelled, pendingSteps.size(), activeSubTasks.size());
+        LOGGER.info(
+            "[LP] step() called. State: {}, Cancelled: {}, PendingSteps: {}, ActiveSubTasks: {}",
+            state,
+            cancelled,
+            pendingSteps.size(),
+            activeSubTasks.size()
+        );
         boolean changed = pruneCompletedSubTasks();
 
         if (state == TaskState.READY) {
@@ -190,7 +196,12 @@ public final class LpTaskDispatcher extends TaskImpl {
             return false;
         }
 
-        LOGGER.info("[LP] Strict dispatch: Dispatched subtask {} for step {} ({} iterations)", dispatched.get(), next, dispatchIterations);
+        LOGGER.info(
+            "[LP] Strict dispatch: Dispatched subtask {} for step {} ({} iterations)",
+            dispatched.get(),
+            next,
+            dispatchIterations
+        );
         updatePendingStepAfterDispatch(0, next, dispatchIterations);
         return true;
     }
@@ -219,7 +230,12 @@ public final class LpTaskDispatcher extends TaskImpl {
                     continue;
                 }
 
-                LOGGER.info("[LP] Relaxed dispatch: Dispatched subtask {} for step {} ({} iterations)", dispatched.get(), step, dispatchIterations);
+                LOGGER.info(
+                    "[LP] Relaxed dispatch: Dispatched subtask {} for step {} ({} iterations)",
+                    dispatched.get(),
+                    step,
+                    dispatchIterations
+                );
                 consume(requirements, available);
                 updatePendingStepAfterDispatch(index, step, dispatchIterations);
                 changed = true;
@@ -246,11 +262,15 @@ public final class LpTaskDispatcher extends TaskImpl {
                                              final long dispatchIterations,
                                              final Map<ResourceKey, Long> requirements) {
         final LpExecutionPlanStep dispatchedStep = new LpExecutionPlanStep(step.recipe(), dispatchIterations);
-        final boolean root = step.recipe().pattern().layout().outputs().stream()
+        final boolean root = step.recipe()
+            .pattern()
+            .layout()
+            .outputs()
+            .stream()
             .anyMatch(output -> output.resource().equals(getResource()));
         final TaskPlan plan = LpDispatcherHelper.toSingleStepPlan(getResource(), -1, dispatchedStep, root);
         final Pattern pattern = step.recipe().pattern();
-        
+
         if (!hasProvider.test(pattern)) {
             return Optional.empty();
         }

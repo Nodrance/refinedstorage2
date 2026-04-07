@@ -106,7 +106,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
         return shouldUseLinearAutocraftingSystem() ? linearAutocrafting : traditionalAutocrafting;
     }
 
-    private boolean shouldUseLinearAutocraftingSystem() {
+    boolean shouldUseLinearAutocraftingSystem() {
         return false;
     }
 

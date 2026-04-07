@@ -40,8 +40,8 @@ public final class LpFuzzyExpander {
      * Non-fuzzy patterns pass through as-is via {@link LpPatternRecipe#fromPattern}.
      * Fuzzy patterns are expanded into multiple variants, one per allocation combination
      * of their ingredient subsets.
-     * <p>
-     * Subsets are computed globally across all patterns to prevent overlapping:
+        *
+        * <p>Subsets are computed globally across all patterns to prevent overlapping:
      * resources that participate in exactly the same set of fuzzy ingredient slots
      * are grouped into one shared subset, ensuring the LP solver never double-counts.
      *
@@ -172,34 +172,23 @@ public final class LpFuzzyExpander {
         final Set<ResourceKey> craftableResources,
         final LpResourceSet startingResources
     ) {
-        // Track which fuzzy ingredient slots each non-craftable resource participates in
         final Map<ResourceKey, Set<String>> resourceParticipation = new LinkedHashMap<>();
 
         for (int pi = 0; pi < patterns.size(); pi++) {
-            final List<Ingredient> ingredients = patterns.get(pi).layout().ingredients();
-            for (int ii = 0; ii < ingredients.size(); ii++) {
-                final Ingredient ingredient = ingredients.get(ii);
-                if (ingredient.inputs().size() <= 1) {
-                    continue;
-                }
-                final String slotKey = pi + ":" + ii;
-                for (final ResourceKey option : ingredient.inputs()) {
-                    if (!craftableResources.contains(option) && startingResources.getAmount(option) > 0) {
-                        resourceParticipation
-                            .computeIfAbsent(option, k -> new LinkedHashSet<>())
-                            .add(slotKey);
-                    }
-                }
-            }
+            collectPatternParticipation(
+                resourceParticipation,
+                patterns.get(pi).layout().ingredients(),
+                pi,
+                craftableResources,
+                startingResources
+            );
         }
 
-        // Group resources with identical participation sets
         final Map<Set<String>, List<ResourceKey>> groups = new LinkedHashMap<>();
         for (final var entry : resourceParticipation.entrySet()) {
             groups.computeIfAbsent(entry.getValue(), k -> new ArrayList<>()).add(entry.getKey());
         }
 
-        // Create mapping: resource → subset representative (itself or an LpResourceSubset)
         final Map<ResourceKey, ResourceKey> resourceToSubset = new LinkedHashMap<>();
         for (final var group : groups.values()) {
             if (group.size() == 1) {
@@ -213,6 +202,51 @@ public final class LpFuzzyExpander {
         }
 
         return resourceToSubset;
+    }
+
+    private static void collectPatternParticipation(
+        final Map<ResourceKey, Set<String>> resourceParticipation,
+        final List<Ingredient> ingredients,
+        final int patternIndex,
+        final Set<ResourceKey> craftableResources,
+        final LpResourceSet startingResources
+    ) {
+        for (int ingredientIndex = 0; ingredientIndex < ingredients.size(); ingredientIndex++) {
+            collectIngredientParticipation(
+                resourceParticipation,
+                ingredients.get(ingredientIndex),
+                patternIndex,
+                ingredientIndex,
+                craftableResources,
+                startingResources
+            );
+        }
+    }
+
+    private static void collectIngredientParticipation(
+        final Map<ResourceKey, Set<String>> resourceParticipation,
+        final Ingredient ingredient,
+        final int patternIndex,
+        final int ingredientIndex,
+        final Set<ResourceKey> craftableResources,
+        final LpResourceSet startingResources
+    ) {
+        if (ingredient.inputs().size() <= 1) {
+            return;
+        }
+
+        final String slotKey = patternIndex + ":" + ingredientIndex;
+        ingredient.inputs().stream()
+            .filter(option -> isStorageOnlyOption(option, craftableResources, startingResources))
+            .forEach(option -> resourceParticipation
+                .computeIfAbsent(option, ignored -> new LinkedHashSet<>())
+                .add(slotKey));
+    }
+
+    private static boolean isStorageOnlyOption(final ResourceKey option,
+                                               final Set<ResourceKey> craftableResources,
+                                               final LpResourceSet startingResources) {
+        return !craftableResources.contains(option) && startingResources.getAmount(option) > 0;
     }
 
     /**
@@ -300,21 +334,35 @@ public final class LpFuzzyExpander {
             );
             final List<Map<ResourceKey, Long>> newVariants = new ArrayList<>();
             for (final Map<ResourceKey, Long> existing : variants) {
-                for (final Map<ResourceKey, Long> allocation : groupAllocations) {
-                    final Map<ResourceKey, Long> combined = new LinkedHashMap<>(existing);
-                    for (final var entry : allocation.entrySet()) {
-                        combined.merge(entry.getKey(), entry.getValue(), Long::sum);
-                    }
-                    newVariants.add(combined);
-                    if (newVariants.size() > MAX_VARIANTS_PER_RECIPE) {
-                        return newVariants;
-                    }
+                if (appendCombinedVariants(existing, groupAllocations, newVariants)) {
+                    return newVariants;
                 }
             }
             variants = newVariants;
         }
 
         return variants;
+    }
+
+    private static boolean appendCombinedVariants(
+        final Map<ResourceKey, Long> existing,
+        final List<Map<ResourceKey, Long>> groupAllocations,
+        final List<Map<ResourceKey, Long>> newVariants
+    ) {
+        for (final Map<ResourceKey, Long> allocation : groupAllocations) {
+            newVariants.add(combineVariantInputs(existing, allocation));
+            if (newVariants.size() > MAX_VARIANTS_PER_RECIPE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Map<ResourceKey, Long> combineVariantInputs(final Map<ResourceKey, Long> existing,
+                                                               final Map<ResourceKey, Long> allocation) {
+        final Map<ResourceKey, Long> combined = new LinkedHashMap<>(existing);
+        allocation.forEach((resource, amount) -> combined.merge(resource, amount, Long::sum));
+        return combined;
     }
 
     /**
@@ -430,8 +478,8 @@ public final class LpFuzzyExpander {
     /**
      * Decodes plan steps by mapping variant recipe IDs back to source patterns
      * and resolving {@link LpResourceSubset} inputs to concrete resources.
-     * <p>
-     * When a step has subset inputs that can't be evenly divided across iterations
+      *
+      * <p>When a step has subset inputs that can't be evenly divided across iterations
      * (because members have unequal availability), the step is split into sub-steps,
      * each with a uniform per-iteration allocation.
      *
