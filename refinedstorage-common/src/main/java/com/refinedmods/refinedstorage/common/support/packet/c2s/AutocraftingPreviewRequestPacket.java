@@ -1,6 +1,7 @@
 package com.refinedmods.refinedstorage.common.support.packet.c2s;
 
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewProvider;
+import com.refinedmods.refinedstorage.api.network.impl.autocrafting.AutocraftingModeContext;
 import com.refinedmods.refinedstorage.api.network.impl.autocrafting.TimeoutableCancellationToken;
 import com.refinedmods.refinedstorage.common.api.support.resource.PlatformResourceKey;
 import com.refinedmods.refinedstorage.common.autocrafting.preview.AutocraftingPreviewStyle;
@@ -23,7 +24,8 @@ import static com.refinedmods.refinedstorage.common.util.PlatformUtil.enumStream
 public record AutocraftingPreviewRequestPacket(UUID id,
                                                PlatformResourceKey resource,
                                                long amount,
-                                               AutocraftingPreviewStyle style) implements CustomPacketPayload {
+                                               AutocraftingPreviewStyle style,
+                                               boolean useLinearAutocraftingSystem) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<AutocraftingPreviewRequestPacket>
         PACKET_TYPE = new CustomPacketPayload.Type<>(
         createIdentifier("autocrafting_preview_request")
@@ -35,6 +37,7 @@ public record AutocraftingPreviewRequestPacket(UUID id,
                 ResourceCodecs.STREAM_CODEC, AutocraftingPreviewRequestPacket::resource,
                 ByteBufCodecs.VAR_LONG, AutocraftingPreviewRequestPacket::amount,
                 enumStreamCodec(AutocraftingPreviewStyle.values()), AutocraftingPreviewRequestPacket::style,
+                ByteBufCodecs.BOOL, AutocraftingPreviewRequestPacket::useLinearAutocraftingSystem,
                 AutocraftingPreviewRequestPacket::new
             );
 
@@ -47,15 +50,17 @@ public record AutocraftingPreviewRequestPacket(UUID id,
 
     private static void handle(final AutocraftingPreviewRequestPacket packet, final PreviewProvider provider,
                                final ServerPlayer player) {
-        if (packet.style == AutocraftingPreviewStyle.LIST) {
-            provider.getPreview(packet.resource(), packet.amount(), new TimeoutableCancellationToken())
-                .thenAccept(optionalPreview -> optionalPreview.ifPresent(preview ->
-                    S2CPackets.sendAutocraftingPreviewResponse(player, packet.id, preview)));
-        } else if (packet.style == AutocraftingPreviewStyle.TREE) {
-            provider.getTreePreview(packet.resource(), packet.amount(), new TimeoutableCancellationToken())
-                .thenAccept(optionalPreview -> optionalPreview.ifPresent(preview ->
-                    S2CPackets.sendAutocraftingTreePreviewResponse(player, packet.id, preview)));
-        }
+        AutocraftingModeContext.withUseLinearAutocraftingSystem(packet.useLinearAutocraftingSystem(), () -> {
+            if (packet.style == AutocraftingPreviewStyle.LIST) {
+                provider.getPreview(packet.resource(), packet.amount(), new TimeoutableCancellationToken())
+                    .thenAccept(optionalPreview -> optionalPreview.ifPresent(preview ->
+                        S2CPackets.sendAutocraftingPreviewResponse(player, packet.id, preview)));
+            } else if (packet.style == AutocraftingPreviewStyle.TREE) {
+                provider.getTreePreview(packet.resource(), packet.amount(), new TimeoutableCancellationToken())
+                    .thenAccept(optionalPreview -> optionalPreview.ifPresent(preview ->
+                        S2CPackets.sendAutocraftingTreePreviewResponse(player, packet.id, preview)));
+            }
+        });
     }
 
     @Override

@@ -33,7 +33,9 @@ public class AutocraftingRequest {
         return new AutocraftingRequest(UUID.randomUUID(), resourceAmount.resource(), displayAmount);
     }
 
-    boolean sendPreviewRequest(final double previewAmount, final AutocraftingPreviewStyle style) {
+    boolean sendPreviewRequest(final double previewAmount,
+                               final AutocraftingPreviewStyle style,
+                               final boolean useLinearAutocraftingSystem) {
         if (!(resource instanceof PlatformResourceKey resourceKey)) {
             return false;
         }
@@ -43,7 +45,13 @@ public class AutocraftingRequest {
         }
         this.preview = null;
         this.pendingPreviewAmount = normalizedAmount;
-        C2SPackets.sendAutocraftingPreviewRequest(id, resourceKey, normalizedAmount, style);
+        C2SPackets.sendAutocraftingPreviewRequest(
+            id,
+            resourceKey,
+            normalizedAmount,
+            style,
+            useLinearAutocraftingSystem
+        );
         return true;
     }
 
@@ -59,12 +67,20 @@ public class AutocraftingRequest {
         this.treePreview = previewReceived;
     }
 
-    void sendRequest(final double amountRequested, final boolean notify) {
+    void sendRequest(final double amountRequested,
+                     final boolean notify,
+                     final boolean useLinearAutocraftingSystem) {
         if (!(resource instanceof PlatformResourceKey resourceKey)) {
             return;
         }
         final long normalizedAmount = resourceKey.getResourceType().normalizeAmount(amountRequested);
-        C2SPackets.sendAutocraftingRequest(id, resourceKey, normalizedAmount, notify);
+        C2SPackets.sendAutocraftingRequest(
+            id,
+            resourceKey,
+            normalizedAmount,
+            notify,
+            useLinearAutocraftingSystem
+        );
     }
 
     UUID getId() {

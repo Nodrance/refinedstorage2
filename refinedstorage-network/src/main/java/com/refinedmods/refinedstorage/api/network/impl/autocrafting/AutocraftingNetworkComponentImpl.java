@@ -20,6 +20,7 @@ import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -27,7 +28,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComponent, ParentContainer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AutocraftingNetworkComponentImpl.class);
+
     private final AutocraftingNetworkComponentState state;
     private final TraditionalAutocraftingNetworkComponentImpl traditionalAutocrafting;
     private final LinearAutocraftingNetworkComponentImpl linearAutocrafting;
@@ -69,20 +75,38 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
     public CompletableFuture<Optional<Preview>> getPreview(final ResourceKey resource,
                                                            final long amount,
                                                            final CancellationToken cancellationToken) {
-        return getImplementation().getPreview(resource, amount, cancellationToken);
+        return compareAndReturnPreferred(
+            traditionalAutocrafting.getPreview(resource, amount, cancellationToken),
+            linearAutocrafting.getPreview(resource, amount, cancellationToken),
+            "preview",
+            resource,
+            amount
+        );
     }
 
     @Override
     public CompletableFuture<Optional<TreePreview>> getTreePreview(final ResourceKey resource,
                                                                    final long amount,
                                                                    final CancellationToken cancellationToken) {
-        return getImplementation().getTreePreview(resource, amount, cancellationToken);
+        return compareAndReturnPreferred(
+            traditionalAutocrafting.getTreePreview(resource, amount, cancellationToken),
+            linearAutocrafting.getTreePreview(resource, amount, cancellationToken),
+            "tree preview",
+            resource,
+            amount
+        );
     }
 
     @Override
     public CompletableFuture<Long> getMaxAmount(final ResourceKey resource,
                                                 final CancellationToken cancellationToken) {
-        return getImplementation().getMaxAmount(resource, cancellationToken);
+        return compareAndReturnPreferred(
+            traditionalAutocrafting.getMaxAmount(resource, cancellationToken),
+            linearAutocrafting.getMaxAmount(resource, cancellationToken),
+            "max amount",
+            resource,
+            null
+        );
     }
 
     @Override
@@ -107,7 +131,46 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
     }
 
     boolean shouldUseLinearAutocraftingSystem() {
-        return false;
+        return AutocraftingModeContext.isUseLinearAutocraftingSystem();
+    }
+
+    private <T> CompletableFuture<T> compareAndReturnPreferred(final CompletableFuture<T> traditionalFuture,
+                                                               final CompletableFuture<T> linearFuture,
+                                                               final String operation,
+                                                               final ResourceKey resource,
+                                                               @Nullable final Long amount) {
+        final boolean useLinear = shouldUseLinearAutocraftingSystem();
+        final CompletableFuture<T> preferredFuture = useLinear ? linearFuture : traditionalFuture;
+        final CompletableFuture<T> comparisonFuture = useLinear ? traditionalFuture : linearFuture;
+        final String failingImplementation = useLinear ? "traditional" : "linear";
+
+        return preferredFuture.thenCompose(preferredResult -> comparisonFuture.handle((comparisonResult, throwable) -> {
+            if (throwable != null) {
+                LOGGER.warn(
+                    "Failed to compare autocrafting {} for {}{} because the {} implementation errored",
+                    operation,
+                    resource,
+                    amount == null ? "" : " x" + amount,
+                    failingImplementation,
+                    throwable
+                );
+                return preferredResult;
+            }
+
+            final T traditionalResult = useLinear ? comparisonResult : preferredResult;
+            final T linearResult = useLinear ? preferredResult : comparisonResult;
+            if (!Objects.equals(traditionalResult, linearResult)) {
+                LOGGER.warn(
+                    "Autocrafting {} mismatch for {}{}; traditional={}, linear={}",
+                    operation,
+                    resource,
+                    amount == null ? "" : " x" + amount,
+                    traditionalResult,
+                    linearResult
+                );
+            }
+            return preferredResult;
+        }));
     }
 
     @Override

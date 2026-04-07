@@ -24,6 +24,7 @@ import com.refinedmods.refinedstorage.api.storage.StorageImpl;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 import com.refinedmods.refinedstorage.network.test.fixtures.NetworkTestFixtures;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +41,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static com.refinedmods.refinedstorage.api.autocrafting.PatternBuilder.pattern;
 import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.A;
 import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.B;
+import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.B_ALTERNATIVE;
 import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.C;
 import static com.refinedmods.refinedstorage.network.test.fixtures.ResourceFixtures.D;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -698,6 +700,56 @@ class LinearAutocraftingNetworkComponentImplTest {
     }
 
     @Test
+    void shouldReportBaseResourceDeficitForFuzzyIntermediateChain() {
+        // Arrange: A -> 4B, 2(any plank B/B') -> 4C, 4B + 2C -> 3D.
+        // Requesting 1D should round to one recipe craft (3D) and report missing A,
+        // not missing B, because B is producible from A.
+        rootStorage.addSource(new StorageImpl());
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 4).build());
+        provider.setPattern(2, pattern().ingredient(2).input(B).input(B_ALTERNATIVE).end().output(C, 4).build());
+        provider.setPattern(3, pattern().ingredient(B, 4).ingredient(C, 2).output(D, 3).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<Preview> preview = sut.getPreview(D, 1, CancellationToken.NONE).join();
+
+        // Assert
+        assertThat(preview).isPresent();
+        assertThat(preview.get().type()).isEqualTo(PreviewType.MISSING_RESOURCES);
+        assertThat(preview.get().items())
+            .anyMatch(item -> item.resource().equals(D) && item.toCraft() == 3)
+            .anyMatch(item -> item.resource().equals(A) && item.missing() == 2)
+            .noneMatch(item -> item.resource().equals(B) && item.missing() > 0);
+    }
+
+    @Test
+    void shouldReportBaseResourceDeficitInTreePreviewForFuzzyIntermediateChain() {
+        // Arrange: A -> 4B, 2(any plank B/B') -> 4C, 4B + 2C -> 3D.
+        // Missing resources should point to A (base), not B (intermediate).
+        rootStorage.addSource(new StorageImpl());
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 4).build());
+        provider.setPattern(2, pattern().ingredient(2).input(B).input(B_ALTERNATIVE).end().output(C, 4).build());
+        provider.setPattern(3, pattern().ingredient(B, 4).ingredient(C, 2).output(D, 3).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act + assert: across a range of request sizes, B should never be reported as missing.
+        for (int requestedAmount = 1; requestedAmount <= 32; requestedAmount++) {
+            final Optional<TreePreview> preview = sut.getTreePreview(D, requestedAmount, CancellationToken.NONE).join();
+            assertThat(preview).isPresent();
+            assertThat(preview.get().type()).isEqualTo(PreviewType.MISSING_RESOURCES);
+            final List<TreePreviewNode> nodes = flattenTree(preview.get().rootNode());
+            assertThat(nodes)
+                .as("requestedAmount=%d", requestedAmount)
+                .anyMatch(node -> node.getResource().equals(A) && node.getMissing() > 0)
+                .noneMatch(node -> node.getResource().equals(B) && node.getMissing() > 0);
+        }
+    }
+
+    @Test
     void shouldExecuteMultiStepPlanForSelfConsumingRecipeViaLpDispatcher() {
         // Arrange: recipe A+B→2A (A is both consumed and produced).
         // With only 1A available the LP system must split the plan so that each
@@ -733,6 +785,23 @@ class LinearAutocraftingNetworkComponentImplTest {
         assertThat(provider.getTasks()).isEmpty();
         assertThat(rootStorage.getAll()).usingRecursiveFieldByFieldElementComparator()
             .containsExactlyInAnyOrder(new ResourceAmount(A, 5), new ResourceAmount(B, 6));
+    }
+
+    private static List<TreePreviewNode> flattenTree(final TreePreviewNode rootNode) {
+        if (rootNode == null) {
+            return List.of();
+        }
+
+        final List<TreePreviewNode> nodes = new ArrayList<>();
+        collectNodes(rootNode, nodes);
+        return nodes;
+    }
+
+    private static void collectNodes(final TreePreviewNode node, final List<TreePreviewNode> nodes) {
+        nodes.add(node);
+        for (final TreePreviewNode child : node.getChildren()) {
+            collectNodes(child, nodes);
+        }
     }
 
     private static class LpAutocraftingNetworkComponent extends AutocraftingNetworkComponentImpl {

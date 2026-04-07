@@ -33,6 +33,7 @@ public class ConfigImpl implements Config {
     private final ModConfigSpec.IntValue maxRowsStretch;
     private final ModConfigSpec.BooleanValue searchBoxAutoSelected;
     private final ModConfigSpec.BooleanValue autocraftingNotification;
+    private final ModConfigSpec.BooleanValue useLinearAutocraftingSystem;
     private final ModConfigSpec.EnumValue<AutocraftingPreviewStyle> autocraftingPreviewStyle;
     private final SimpleEnergyUsageEntry cable;
     private final ControllerEntry controller;
@@ -88,6 +89,9 @@ public class ConfigImpl implements Config {
         autocraftingNotification = builder
             .translation(translationKey("autocraftingNotification"))
             .define("autocraftingNotification", true);
+        useLinearAutocraftingSystem = builder
+            .translation(translationKey("useLinearAutocraftingSystem"))
+            .define("useLinearAutocraftingSystem", true);
         autocraftingPreviewStyle = builder
             .translation(translationKey("autocraftingPreviewStyle"))
             .defineEnum("autocraftingPreviewStyle", AutocraftingPreviewStyle.LIST);
@@ -162,6 +166,19 @@ public class ConfigImpl implements Config {
     public void setAutocraftingNotification(final boolean autocraftingNotification) {
         if (autocraftingNotification != Boolean.TRUE.equals(this.autocraftingNotification.get())) {
             this.autocraftingNotification.set(autocraftingNotification);
+            ConfigImpl.this.spec.save();
+        }
+    }
+
+    @Override
+    public boolean isUseLinearAutocraftingSystem() {
+        return useLinearAutocraftingSystem.get();
+    }
+
+    @Override
+    public void setUseLinearAutocraftingSystem(final boolean useLinearAutocraftingSystem) {
+        if (useLinearAutocraftingSystem != Boolean.TRUE.equals(this.useLinearAutocraftingSystem.get())) {
+            this.useLinearAutocraftingSystem.set(useLinearAutocraftingSystem);
             ConfigImpl.this.spec.save();
         }
     }

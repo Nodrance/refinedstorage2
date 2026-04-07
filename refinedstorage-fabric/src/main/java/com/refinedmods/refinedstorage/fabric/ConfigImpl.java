@@ -30,6 +30,8 @@ public class ConfigImpl implements ConfigData, com.refinedmods.refinedstorage.co
 
     private boolean autocraftingNotification = true;
 
+    private boolean useLinearAutocraftingSystem = true;
+
     private AutocraftingPreviewStyle autocraftingPreviewStyle = AutocraftingPreviewStyle.LIST;
 
     private boolean searchBoxAutoSelected = false;
@@ -205,6 +207,17 @@ public class ConfigImpl implements ConfigData, com.refinedmods.refinedstorage.co
     @Override
     public void setAutocraftingNotification(final boolean autocraftingNotification) {
         this.autocraftingNotification = autocraftingNotification;
+        AutoConfig.getConfigHolder(ConfigImpl.class).save();
+    }
+
+    @Override
+    public boolean isUseLinearAutocraftingSystem() {
+        return useLinearAutocraftingSystem;
+    }
+
+    @Override
+    public void setUseLinearAutocraftingSystem(final boolean useLinearAutocraftingSystem) {
+        this.useLinearAutocraftingSystem = useLinearAutocraftingSystem;
         AutoConfig.getConfigHolder(ConfigImpl.class).save();
     }
 

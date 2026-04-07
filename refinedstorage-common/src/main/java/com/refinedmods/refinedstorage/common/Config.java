@@ -36,6 +36,10 @@ public interface Config {
 
     void setAutocraftingNotification(boolean autocraftingNotification);
 
+    boolean isUseLinearAutocraftingSystem();
+
+    void setUseLinearAutocraftingSystem(boolean useLinearAutocraftingSystem);
+
     AutocraftingPreviewStyle getAutocraftingPreviewStyle();
 
     void setAutocraftingPreviewStyle(AutocraftingPreviewStyle autocraftingPreviewStyle);

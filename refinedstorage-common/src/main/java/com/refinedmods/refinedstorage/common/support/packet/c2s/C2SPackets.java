@@ -137,23 +137,41 @@ public final class C2SPackets {
     public static void sendAutocraftingPreviewRequest(final UUID id,
                                                       final PlatformResourceKey resource,
                                                       final long amount,
-                                                      final AutocraftingPreviewStyle style) {
-        Platform.INSTANCE.sendPacketToServer(new AutocraftingPreviewRequestPacket(id, resource, amount, style));
+                                                      final AutocraftingPreviewStyle style,
+                                                      final boolean useLinearAutocraftingSystem) {
+        Platform.INSTANCE.sendPacketToServer(new AutocraftingPreviewRequestPacket(
+            id,
+            resource,
+            amount,
+            style,
+            useLinearAutocraftingSystem
+        ));
     }
 
     public static void sendAutocraftingRequest(final UUID id,
                                                final PlatformResourceKey resource,
                                                final long amount,
-                                               final boolean notify) {
-        Platform.INSTANCE.sendPacketToServer(new AutocraftingRequestPacket(id, resource, amount, notify));
+                                               final boolean notify,
+                                               final boolean useLinearAutocraftingSystem) {
+        Platform.INSTANCE.sendPacketToServer(new AutocraftingRequestPacket(
+            id,
+            resource,
+            amount,
+            notify,
+            useLinearAutocraftingSystem
+        ));
     }
 
     public static void sendAutocraftingPreviewCancelRequest() {
         Platform.INSTANCE.sendPacketToServer(AutocraftingPreviewCancelRequestPacket.INSTANCE);
     }
 
-    public static void sendAutocraftingPreviewMaxAmountRequest(final PlatformResourceKey resource) {
-        Platform.INSTANCE.sendPacketToServer(new AutocraftingPreviewMaxAmountRequestPacket(resource));
+    public static void sendAutocraftingPreviewMaxAmountRequest(final PlatformResourceKey resource,
+                                                               final boolean useLinearAutocraftingSystem) {
+        Platform.INSTANCE.sendPacketToServer(new AutocraftingPreviewMaxAmountRequestPacket(
+            resource,
+            useLinearAutocraftingSystem
+        ));
     }
 
     public static void sendAutocraftingMonitorCancel(final TaskId taskId) {

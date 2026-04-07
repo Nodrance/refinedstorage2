@@ -1,6 +1,7 @@
 package com.refinedmods.refinedstorage.common.support.packet.c2s;
 
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewProvider;
+import com.refinedmods.refinedstorage.api.network.impl.autocrafting.AutocraftingModeContext;
 import com.refinedmods.refinedstorage.api.network.impl.autocrafting.TimeoutableCancellationToken;
 import com.refinedmods.refinedstorage.common.api.storage.PlayerActor;
 import com.refinedmods.refinedstorage.common.api.support.resource.PlatformResourceKey;
@@ -23,7 +24,8 @@ import static com.refinedmods.refinedstorage.common.util.IdentifierUtil.createId
 public record AutocraftingRequestPacket(UUID id,
                                         PlatformResourceKey resource,
                                         long amount,
-                                        boolean notifyPlayer) implements CustomPacketPayload {
+                                        boolean notifyPlayer,
+                                        boolean useLinearAutocraftingSystem) implements CustomPacketPayload {
     public static final Type<AutocraftingRequestPacket> PACKET_TYPE = new Type<>(
         createIdentifier("autocrafting_request")
     );
@@ -33,6 +35,7 @@ public record AutocraftingRequestPacket(UUID id,
             ResourceCodecs.STREAM_CODEC, AutocraftingRequestPacket::resource,
             ByteBufCodecs.VAR_LONG, AutocraftingRequestPacket::amount,
             ByteBufCodecs.BOOL, AutocraftingRequestPacket::notifyPlayer,
+            ByteBufCodecs.BOOL, AutocraftingRequestPacket::useLinearAutocraftingSystem,
             AutocraftingRequestPacket::new
         );
 
@@ -40,8 +43,16 @@ public record AutocraftingRequestPacket(UUID id,
         final Player player = ctx.getPlayer();
         if (player.containerMenu instanceof PreviewProvider provider) {
             final PlayerActor playerActor = new PlayerActor(player);
-            final var taskId = provider.startTask(packet.resource, packet.amount, playerActor, packet.notifyPlayer,
-                new TimeoutableCancellationToken());
+            final var taskId = AutocraftingModeContext.withUseLinearAutocraftingSystem(
+                packet.useLinearAutocraftingSystem(),
+                () -> provider.startTask(
+                    packet.resource,
+                    packet.amount,
+                    playerActor,
+                    packet.notifyPlayer,
+                    new TimeoutableCancellationToken()
+                )
+            );
             S2CPackets.sendAutocraftingResponse((ServerPlayer) player, packet.id, taskId.isPresent());
         }
     }

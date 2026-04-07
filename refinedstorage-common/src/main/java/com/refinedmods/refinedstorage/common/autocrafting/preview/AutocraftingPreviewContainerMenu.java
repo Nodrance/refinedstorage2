@@ -64,7 +64,7 @@ public class AutocraftingPreviewContainerMenu extends AbstractResourceContainerM
         style = style.next();
         Platform.INSTANCE.getConfig().setAutocraftingPreviewStyle(style);
         currentRequest.clearPreview();
-        if (currentRequest.sendPreviewRequest(amount, style) && listener != null) {
+        if (currentRequest.sendPreviewRequest(amount, style, isUseLinearAutocraftingSystem()) && listener != null) {
             listener.previewChanged(null, null);
         }
         return style;
@@ -86,7 +86,7 @@ public class AutocraftingPreviewContainerMenu extends AbstractResourceContainerM
     }
 
     void amountChanged(final double amount) {
-        if (currentRequest.sendPreviewRequest(amount, style) && listener != null) {
+        if (currentRequest.sendPreviewRequest(amount, style, isUseLinearAutocraftingSystem()) && listener != null) {
             listener.previewChanged(null, null);
         }
     }
@@ -119,7 +119,7 @@ public class AutocraftingPreviewContainerMenu extends AbstractResourceContainerM
     }
 
     void sendRequest(final double amount, final boolean notify) {
-        currentRequest.sendRequest(amount, notify);
+        currentRequest.sendRequest(amount, notify, isUseLinearAutocraftingSystem());
     }
 
     public void responseReceived(final UUID id, final boolean success) {
@@ -147,7 +147,7 @@ public class AutocraftingPreviewContainerMenu extends AbstractResourceContainerM
 
     void requestMaxAmount() {
         if (currentRequest.getResource() instanceof PlatformResourceKey resource) {
-            C2SPackets.sendAutocraftingPreviewMaxAmountRequest(resource);
+            C2SPackets.sendAutocraftingPreviewMaxAmountRequest(resource, isUseLinearAutocraftingSystem());
         }
     }
 
@@ -157,6 +157,14 @@ public class AutocraftingPreviewContainerMenu extends AbstractResourceContainerM
 
     void setNotify(final boolean notify) {
         Platform.INSTANCE.getConfig().setAutocraftingNotification(notify);
+    }
+
+    boolean isUseLinearAutocraftingSystem() {
+        return Platform.INSTANCE.getConfig().isUseLinearAutocraftingSystem();
+    }
+
+    void setUseLinearAutocraftingSystem(final boolean useLinearAutocraftingSystem) {
+        Platform.INSTANCE.getConfig().setUseLinearAutocraftingSystem(useLinearAutocraftingSystem);
     }
 
     double getMinAmount() {

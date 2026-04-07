@@ -258,6 +258,8 @@
   "gui.refinedstorage.autocrafting_preview.not_available": "Autocrafting is currently handling other tasks. Please try again in a moment.",
   "gui.refinedstorage.autocrafting_preview.notify": "Notify",
   "gui.refinedstorage.autocrafting_preview.notify.help": "Send a notification when the autocrafting task is finished.",
+  "gui.refinedstorage.autocrafting_preview.use_linear_autocrafting_system": "Use linear autocrafting",
+  "gui.refinedstorage.autocrafting_preview.use_linear_autocrafting_system.help": "Switch between linear and traditional autocrafting.",
   "gui.refinedstorage.autocrafting_preview.style.list": "List",
   "gui.refinedstorage.autocrafting_preview.style.tree": "Tree",
   "gui.refinedstorage.autocrafting_preview.zoom": "Zoom",

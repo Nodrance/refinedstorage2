@@ -58,6 +58,10 @@ public class AutocraftingPreviewScreen extends AbstractAmountScreen<Autocrafting
     private static final MutableComponent MAX_HELP = createTranslation("gui", "autocrafting_preview.max.help");
     private static final MutableComponent NOTIFY = createTranslation("gui", "autocrafting_preview.notify");
     private static final MutableComponent NOTIFY_HELP = createTranslation("gui", "autocrafting_preview.notify.help");
+    private static final MutableComponent USE_LINEAR_AUTOCRAFTING_SYSTEM =
+        createTranslation("gui", "autocrafting_preview.use_linear_autocrafting_system");
+    private static final MutableComponent USE_LINEAR_AUTOCRAFTING_SYSTEM_HELP =
+        createTranslation("gui", "autocrafting_preview.use_linear_autocrafting_system.help");
     private static final MutableComponent MISSING_RESOURCES = createTranslation(
         "gui",
         "autocrafting_preview.start.missing_resources"
@@ -139,6 +143,8 @@ public class AutocraftingPreviewScreen extends AbstractAmountScreen<Autocrafting
     private Button maxButton;
     @Nullable
     private CheckboxWidget notifyCheckbox;
+    @Nullable
+    private CheckboxWidget useLinearAutocraftingSystemCheckbox;
     @Nullable
     private Button zoomButton;
     @Nullable
@@ -262,6 +268,22 @@ public class AutocraftingPreviewScreen extends AbstractAmountScreen<Autocrafting
         notifyCheckbox.setHelpTooltip(NOTIFY_HELP);
         notifyCheckbox.setOnPressed((checkbox, notify) -> menu.setNotify(notify));
         addRenderableWidget(notifyCheckbox);
+
+        final boolean useLinearSelected = useLinearAutocraftingSystemCheckbox == null
+            ? menu.isUseLinearAutocraftingSystem()
+            : useLinearAutocraftingSystemCheckbox.isSelected();
+        useLinearAutocraftingSystemCheckbox = new CheckboxWidget(
+            leftPos + imageWidth - font.width(USE_LINEAR_AUTOCRAFTING_SYSTEM) - 4 - 9 - 6,
+            topPos + 222 + 6 + 10,
+            USE_LINEAR_AUTOCRAFTING_SYSTEM,
+            Minecraft.getInstance().font,
+            useLinearSelected,
+            CheckboxWidget.Size.SMALL
+        );
+        useLinearAutocraftingSystemCheckbox.setHelpTooltip(USE_LINEAR_AUTOCRAFTING_SYSTEM_HELP);
+        useLinearAutocraftingSystemCheckbox.setOnPressed((checkbox, useLinear) ->
+            menu.setUseLinearAutocraftingSystem(useLinear));
+        addRenderableWidget(useLinearAutocraftingSystemCheckbox);
 
         getExclusionZones().add(new Rect2i(
             leftPos - REQUESTS_WIDTH + 4,
