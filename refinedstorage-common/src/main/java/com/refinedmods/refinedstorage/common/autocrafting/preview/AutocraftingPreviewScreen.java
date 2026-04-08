@@ -259,7 +259,7 @@ public class AutocraftingPreviewScreen extends AbstractAmountScreen<Autocrafting
         final boolean selected = notifyCheckbox == null ? menu.isNotify() : notifyCheckbox.isSelected();
         notifyCheckbox = new CheckboxWidget(
             leftPos + imageWidth - font.width(NOTIFY) - 4 - 9 - 6,
-            topPos + 222 + 6,
+            topPos + 222 + 2,
             NOTIFY,
             Minecraft.getInstance().font,
             selected,
@@ -274,15 +274,17 @@ public class AutocraftingPreviewScreen extends AbstractAmountScreen<Autocrafting
             : useLinearAutocraftingSystemCheckbox.isSelected();
         useLinearAutocraftingSystemCheckbox = new CheckboxWidget(
             leftPos + imageWidth - font.width(USE_LINEAR_AUTOCRAFTING_SYSTEM) - 4 - 9 - 6,
-            topPos + 222 + 6 + 10,
+            topPos + 222 + 2 + 10,
             USE_LINEAR_AUTOCRAFTING_SYSTEM,
             Minecraft.getInstance().font,
             useLinearSelected,
             CheckboxWidget.Size.SMALL
         );
         useLinearAutocraftingSystemCheckbox.setHelpTooltip(USE_LINEAR_AUTOCRAFTING_SYSTEM_HELP);
-        useLinearAutocraftingSystemCheckbox.setOnPressed((checkbox, useLinear) ->
-            menu.setUseLinearAutocraftingSystem(useLinear));
+        useLinearAutocraftingSystemCheckbox.setOnPressed((checkbox, useLinear) -> {
+            menu.setUseLinearAutocraftingSystem(useLinear);
+            onAmountFieldChanged();
+        });
         addRenderableWidget(useLinearAutocraftingSystemCheckbox);
 
         getExclusionZones().add(new Rect2i(
