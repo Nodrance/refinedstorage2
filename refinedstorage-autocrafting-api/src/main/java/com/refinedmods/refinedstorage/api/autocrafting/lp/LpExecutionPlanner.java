@@ -1,5 +1,6 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
+import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.ArrayList;
@@ -20,10 +21,22 @@ public final class LpExecutionPlanner {
         final Map<UUID, Long> recipeValues,
         final LpResourceSet startingResources
     ) {
+        return buildExecutablePlanFromRecipeUsage(recipes, recipeValues, startingResources, CancellationToken.NONE);
+    }
+
+    public static Optional<List<LpExecutionPlanStep>> buildExecutablePlanFromRecipeUsage(
+        final List<LpPatternRecipe> recipes,
+        final Map<UUID, Long> recipeValues,
+        final LpResourceSet startingResources,
+        final CancellationToken cancellationToken
+    ) {
         validateInputs(recipes, recipeValues, startingResources);
+        validateCancellationToken(cancellationToken);
+        throwIfCancelled(cancellationToken);
 
         final Map<UUID, Long> remainingCounts = new LinkedHashMap<>();
         for (final LpPatternRecipe recipe : recipes) {
+            throwIfCancelled(cancellationToken);
             final long rawValue = recipeValues.getOrDefault(recipe.uniqueId(), 0L);
             if (rawValue < 0) {
                 throw new IllegalArgumentException(
@@ -52,9 +65,59 @@ public final class LpExecutionPlanner {
             remainingCounts,
             inventory,
             totalRemaining,
-            plan
+            plan,
+            cancellationToken
         );
         return success ? Optional.of(List.copyOf(plan)) : Optional.empty();
+    }
+
+    public static List<LpExecutionPlanStep> buildRecipeApplicationPlanFromRecipeUsage(
+        final List<LpPatternRecipe> recipes,
+        final Map<UUID, Long> recipeValues,
+        final LpResourceSet startingResources
+    ) {
+        return buildRecipeApplicationPlanFromRecipeUsage(
+            recipes,
+            recipeValues,
+            startingResources,
+            CancellationToken.NONE
+        );
+    }
+
+    public static List<LpExecutionPlanStep> buildRecipeApplicationPlanFromRecipeUsage(
+        final List<LpPatternRecipe> recipes,
+        final Map<UUID, Long> recipeValues,
+        final LpResourceSet startingResources,
+        final CancellationToken cancellationToken
+    ) {
+        validateInputs(recipes, recipeValues, startingResources);
+        validateCancellationToken(cancellationToken);
+        throwIfCancelled(cancellationToken);
+
+        final Optional<List<LpExecutionPlanStep>> executablePlan = buildExecutablePlanFromRecipeUsage(
+            recipes,
+            recipeValues,
+            startingResources,
+            cancellationToken
+        );
+        if (executablePlan.isPresent()) {
+            return executablePlan.get();
+        }
+
+        final List<LpExecutionPlanStep> steps = new ArrayList<>();
+        for (final LpPatternRecipe recipe : recipes) {
+            throwIfCancelled(cancellationToken);
+            final long rawValue = recipeValues.getOrDefault(recipe.uniqueId(), 0L);
+            if (rawValue < 0) {
+                throw new IllegalArgumentException(
+                    "Negative usage count for recipe: " + recipe.description()
+                );
+            }
+            if (rawValue > 0) {
+                steps.add(new LpExecutionPlanStep(recipe, rawValue));
+            }
+        }
+        return List.copyOf(steps);
     }
 
     private static boolean recursivelyBacksolvePlan(final List<LpPatternRecipe> recipes,
@@ -62,7 +125,9 @@ public final class LpExecutionPlanner {
                                                     final Map<UUID, Long> remainingCounts,
                                                     final LpResourceSet inventory,
                                                     final long totalRemaining,
-                                                    final List<LpExecutionPlanStep> plan) {
+                                                    final List<LpExecutionPlanStep> plan,
+                                                    final CancellationToken cancellationToken) {
+        throwIfCancelled(cancellationToken);
         if (totalRemaining == 0) {
             return true;
         }
@@ -71,15 +136,19 @@ public final class LpExecutionPlanner {
             recipes,
             inLoopById,
             remainingCounts,
-            inventory
+            inventory,
+            cancellationToken
         );
 
         if (candidates.isEmpty()) {
+            throwIfCancelled(cancellationToken);
             return false;
         }
 
         for (final Candidate candidate : candidates) {
+            throwIfCancelled(cancellationToken);
             for (final long batch : buildBatchAttempts(candidate)) {
+                throwIfCancelled(cancellationToken);
                 if (tryCandidateBatch(
                     recipes,
                     inLoopById,
@@ -88,7 +157,8 @@ public final class LpExecutionPlanner {
                     totalRemaining,
                     plan,
                     candidate,
-                    batch
+                    batch,
+                    cancellationToken
                 )) {
                     return true;
                 }
@@ -101,35 +171,43 @@ public final class LpExecutionPlanner {
     private static List<Candidate> buildCandidates(final List<LpPatternRecipe> recipes,
                                                    final Map<UUID, Boolean> inLoopById,
                                                    final Map<UUID, Long> remainingCounts,
-                                                   final LpResourceSet inventory) {
-        return recipes.stream()
-            .map(recipe -> toCandidate(recipe, remainingCounts, inventory))
-            .filter(Objects::nonNull)
-            .sorted(Comparator
-                .comparing((Candidate candidate) -> inLoopById.getOrDefault(
-                    candidate.recipe.uniqueId(),
-                    false
-                ))
-                .reversed()
-                .thenComparing(Candidate::maxBatch, Comparator.reverseOrder())
-                .thenComparing(Candidate::remaining, Comparator.reverseOrder())
-                .thenComparing(
-                    Comparator.comparingInt((Candidate candidate) -> candidate.recipe.effectivePriority() == null
-                        ? Integer.MIN_VALUE
-                        : candidate.recipe.effectivePriority()).reversed()
-                )
-                .thenComparing(candidate -> candidate.recipe.uniqueId()))
-            .toList();
+                                                   final LpResourceSet inventory,
+                                                   final CancellationToken cancellationToken) {
+        final List<Candidate> candidates = new ArrayList<>();
+        for (final LpPatternRecipe recipe : recipes) {
+            throwIfCancelled(cancellationToken);
+            final Candidate candidate = toCandidate(recipe, remainingCounts, inventory, cancellationToken);
+            if (candidate != null) {
+                candidates.add(candidate);
+            }
+        }
+        candidates.sort(Comparator
+            .comparing((Candidate candidate) -> inLoopById.getOrDefault(
+                candidate.recipe.uniqueId(),
+                false
+            ))
+            .reversed()
+            .thenComparing(Candidate::maxBatch, Comparator.reverseOrder())
+            .thenComparing(Candidate::remaining, Comparator.reverseOrder())
+            .thenComparing(
+                Comparator.comparingInt((Candidate candidate) -> candidate.recipe.effectivePriority() == null
+                    ? Integer.MIN_VALUE
+                    : candidate.recipe.effectivePriority()).reversed()
+            )
+            .thenComparing(candidate -> candidate.recipe.uniqueId()));
+        return List.copyOf(candidates);
     }
 
     private static Candidate toCandidate(final LpPatternRecipe recipe,
                                          final Map<UUID, Long> remainingCounts,
-                                         final LpResourceSet inventory) {
+                                         final LpResourceSet inventory,
+                                         final CancellationToken cancellationToken) {
+        throwIfCancelled(cancellationToken);
         final long remaining = remainingCounts.getOrDefault(recipe.uniqueId(), 0L);
         if (remaining <= 0) {
             return null;
         }
-        final long maxBatch = Math.min(remaining, computeMaxAffordableBatch(recipe, inventory));
+        final long maxBatch = Math.min(remaining, computeMaxAffordableBatch(recipe, inventory, cancellationToken));
         if (maxBatch <= 0) {
             return null;
         }
@@ -156,7 +234,9 @@ public final class LpExecutionPlanner {
                                              final long totalRemaining,
                                              final List<LpExecutionPlanStep> plan,
                                              final Candidate candidate,
-                                             final long batch) {
+                                             final long batch,
+                                             final CancellationToken cancellationToken) {
+        throwIfCancelled(cancellationToken);
         if (batch <= 0 || batch > candidate.remaining) {
             return false;
         }
@@ -171,12 +251,12 @@ public final class LpExecutionPlanner {
             remainingCounts,
             inventory,
             totalRemaining - batch,
-            plan
+            plan,
+            cancellationToken
         );
         if (success) {
             return true;
         }
-
         removeOrShrinkLastPlanStep(plan, candidate.recipe, batch);
         remainingCounts.put(candidate.recipe.uniqueId(), candidate.remaining);
         rollbackRecipeBatch(candidate.recipe, batch, inventory);
@@ -184,8 +264,15 @@ public final class LpExecutionPlanner {
     }
 
     private static long computeMaxAffordableBatch(final LpPatternRecipe recipe, final LpResourceSet inventory) {
+        return computeMaxAffordableBatch(recipe, inventory, CancellationToken.NONE);
+    }
+
+    private static long computeMaxAffordableBatch(final LpPatternRecipe recipe,
+                                                  final LpResourceSet inventory,
+                                                  final CancellationToken cancellationToken) {
         long maxBatch = Long.MAX_VALUE;
         for (final Map.Entry<ResourceKey, Long> entry : recipe.input()) {
+            throwIfCancelled(cancellationToken);
             final long inputCount = entry.getValue();
             if (inputCount <= 0) {
                 continue;
@@ -263,6 +350,16 @@ public final class LpExecutionPlanner {
         Objects.requireNonNull(recipes, "recipes cannot be null");
         Objects.requireNonNull(recipeValues, "recipeValues cannot be null");
         Objects.requireNonNull(startingResources, "startingResources cannot be null");
+    }
+
+    private static void validateCancellationToken(final CancellationToken cancellationToken) {
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+    }
+
+    private static void throwIfCancelled(final CancellationToken cancellationToken) {
+        if (cancellationToken.isCancelled()) {
+            throw new java.util.concurrent.CancellationException("LP execution planner cancelled");
+        }
     }
 
     private record Candidate(LpPatternRecipe recipe, long remaining, long maxBatch) {

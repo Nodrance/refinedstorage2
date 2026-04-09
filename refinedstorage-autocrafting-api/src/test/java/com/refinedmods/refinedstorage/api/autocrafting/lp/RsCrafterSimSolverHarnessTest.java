@@ -17,10 +17,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code 03_cycles.json}, {@code 04_stress.json}).
  *
  * <p>Maps the Rust {@code find_executable_solution_via_cycle_elimination} to
- * {@link LpCraftingSolver#findExecutableSolutionViaCycleElimination}.
+ * {@link LpCraftingSolver#findRecipeApplicationPlanViaCycleElimination}.
  * <ul>
- *   <li>Rust {@code Ok(solution, plan)} → {@code executableResult().isPresent()}</li>
- *   <li>Rust {@code Err(disabled_ids)} → {@code executableResult().isEmpty()}</li>
+ *   <li>Rust {@code Ok(solution, plan)} → {@code recipeApplicationResult().isPresent()}</li>
+ *   <li>Rust {@code Err(disabled_ids)} → {@code recipeApplicationResult().isEmpty()}</li>
  * </ul>
  */
 class RsCrafterSimSolverHarnessTest {
@@ -75,13 +75,13 @@ class RsCrafterSimSolverHarnessTest {
                           final long[] expectedInvocations,
                           final int[][] expectedRemainingInventory) {
         final LpCraftingSolver.CycleEliminationResult result =
-            solver.findExecutableSolutionViaCycleElimination(recipes, startingItems, target);
+            solver.findRecipeApplicationPlanViaCycleElimination(recipes, startingItems, target);
 
-        assertThat(result.executableResult())
+        assertThat(result.recipeApplicationResult())
             .as("expected an executable plan")
             .isPresent();
 
-        final LpCraftingSolution solution = result.executableResult().get().solution();
+        final LpCraftingSolution solution = result.recipeApplicationResult().get().solution();
 
         for (int i = 0; i < expectedInvocations.length; i++) {
             assertThat(solution.recipeUsageCount(recipes.get(i)))
@@ -101,9 +101,9 @@ class RsCrafterSimSolverHarnessTest {
                              final LpResourceSet startingItems,
                              final LpResourceSet target) {
         final LpCraftingSolver.CycleEliminationResult result =
-            solver.findExecutableSolutionViaCycleElimination(recipes, startingItems, target);
+            solver.findRecipeApplicationPlanViaCycleElimination(recipes, startingItems, target);
 
-        assertThat(result.executableResult())
+        assertThat(result.recipeApplicationResult())
             .as("expected no executable plan (error)")
             .isEmpty();
     }

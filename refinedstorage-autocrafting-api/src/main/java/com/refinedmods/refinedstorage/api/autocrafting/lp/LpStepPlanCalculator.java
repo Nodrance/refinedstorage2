@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 
 import org.slf4j.Logger;
 
@@ -34,7 +35,8 @@ public final class LpStepPlanCalculator {
 
         final LpResourceSet startingResources = buildLpStartingResources(rootStorage);
         final LpFuzzyExpander.FuzzyExpansionResult expansionResult = buildFuzzyExpandedRecipes(
-            patterns, startingResources
+            patterns,
+            startingResources
         );
         final List<LpPatternRecipe> recipes = expansionResult.expandedRecipes();
         if (recipes.isEmpty()) {
@@ -42,35 +44,63 @@ public final class LpStepPlanCalculator {
         }
 
         final LpResourceSet augmentedStarting = LpFuzzyExpander.augmentStartingResources(
-            startingResources, expansionResult.createdSubsets()
+            startingResources,
+            expansionResult.createdSubsets()
         );
-
-        final LpCraftingSolver.PlanningOutcome outcome = new LpCraftingSolver().solve(
-            recipes,
-            augmentedStarting,
-            buildTarget(rootStorage, resource, amount)
-        );
-        if (outcome.executableResult().isEmpty()) {
+        final LpCraftingSolver.PlanningOutcome outcome;
+        try {
+            outcome = new LpCraftingSolver(cancellationToken).solve(
+                recipes,
+                augmentedStarting,
+                buildTarget(rootStorage, resource, amount)
+            );
+        } catch (final CancellationException e) {
+            return Optional.empty();
+        }
+        if (cancellationToken.isCancelled()) {
+            return Optional.empty();
+        }
+        final Optional<List<LpExecutionPlanStep>> executableSteps = extractExecutableSteps(outcome);
+        if (executableSteps.isEmpty()) {
             return Optional.empty();
         }
 
-        List<LpExecutionPlanStep> steps = outcome.executableResult().get().plan();
+        List<LpExecutionPlanStep> steps = executableSteps.get();
         final boolean hasCycles = hasRecipeCycles(steps);
+        steps = decodeFuzzyStepsIfNeeded(steps, expansionResult, patterns, startingResources);
 
-        // Decode fuzzy variant steps back to original patterns with concrete inputs
-        if (!expansionResult.variantToSourcePattern().isEmpty()) {
-            final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
-            for (final Pattern p : patterns) {
-                patternsById.put(p.id(), p);
-            }
-            steps = LpFuzzyExpander.decodePlanSteps(
-                steps, expansionResult.variantToSourcePattern(), patternsById, startingResources
-            );
+        return steps.isEmpty() ? Optional.empty() : Optional.of(new LpStepPlan(steps, hasCycles));
+    }
+
+    private static Optional<List<LpExecutionPlanStep>> extractExecutableSteps(
+        final LpCraftingSolver.PlanningOutcome outcome
+    ) {
+        return outcome.recipeApplicationResult()
+            .filter(result -> result.requiredBaseItems().isEmpty())
+            .map(LpCraftingSolver.RecipeApplicationPlanResult::plan);
+    }
+
+    private static List<LpExecutionPlanStep> decodeFuzzyStepsIfNeeded(
+        final List<LpExecutionPlanStep> steps,
+        final LpFuzzyExpander.FuzzyExpansionResult expansionResult,
+        final Collection<Pattern> patterns,
+        final LpResourceSet startingResources
+    ) {
+        if (expansionResult.variantToSourcePattern().isEmpty()) {
+            return steps;
         }
 
-        return steps.isEmpty()
-            ? Optional.empty()
-            : Optional.of(new LpStepPlan(steps, hasCycles));
+        // Decode fuzzy variant steps back to original patterns with concrete inputs.
+        final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
+        for (final Pattern p : patterns) {
+            patternsById.put(p.id(), p);
+        }
+        return LpFuzzyExpander.decodePlanSteps(
+            steps,
+            expansionResult.variantToSourcePattern(),
+            patternsById,
+            startingResources
+        );
     }
 
     private static LpFuzzyExpander.FuzzyExpansionResult buildFuzzyExpandedRecipes(
@@ -106,6 +136,18 @@ public final class LpStepPlanCalculator {
                                           final RootStorage rootStorage,
                                           final ResourceKey resource,
                                           final long amount) {
+        return calculateMaxAmount(patterns, logger, rootStorage, resource, amount, CancellationToken.NONE);
+    }
+
+    public static long calculateMaxAmount(final Collection<Pattern> patterns,
+                                          final Logger logger,
+                                          final RootStorage rootStorage,
+                                          final ResourceKey resource,
+                                          final long amount,
+                                          final CancellationToken cancellationToken) {
+        if (cancellationToken.isCancelled()) {
+            return 0;
+        }
         final LpResourceSet startingResources = buildLpStartingResources(rootStorage);
         final LpFuzzyExpander.FuzzyExpansionResult expansionResult = buildFuzzyExpandedRecipes(
             patterns, startingResources
@@ -117,11 +159,19 @@ public final class LpStepPlanCalculator {
         final LpResourceSet augmentedStarting = LpFuzzyExpander.augmentStartingResources(
             startingResources, expansionResult.createdSubsets()
         );
-        final LpCraftingSolver.PlanningOutcome outcome = new LpCraftingSolver().solve(
-            recipes,
-            augmentedStarting,
-            buildTarget(rootStorage, resource, 1)
-        );
+        final LpCraftingSolver.PlanningOutcome outcome;
+        try {
+            outcome = new LpCraftingSolver(cancellationToken).solve(
+                recipes,
+                augmentedStarting,
+                buildTarget(rootStorage, resource, 1)
+            );
+        } catch (final CancellationException e) {
+            return 0;
+        }
+        if (cancellationToken.isCancelled()) {
+            return 0;
+        }
         return Math.min(outcome.maxCraftableAmount(), amount);
     }
 

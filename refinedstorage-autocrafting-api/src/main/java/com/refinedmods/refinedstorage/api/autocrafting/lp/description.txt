@@ -1,0 +1,5 @@
+A plain-english description of all the LP stuff, both for me to aorganize my thoughts and for anyone coming after me to get a handle on it
+
+Public classes:
+LpResourceSet: map from resource to amount. Supports negatives. 
+LpCraftingSolution: set of "use this recipe N times in total" as well as the final inventory after doing that and a list of resources considered relevant

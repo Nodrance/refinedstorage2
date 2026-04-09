@@ -298,6 +298,11 @@ public final class LpFuzzyExpander {
             }
         }
 
+        // If no viable options remain after filtering, keep the first option as a fallback
+        if (subsets.isEmpty() && !ingredient.inputs().isEmpty()) {
+            subsets.add(ingredient.inputs().getFirst());
+        }
+
         return new IngredientPartition(ingredient.amount(), subsets);
     }
 

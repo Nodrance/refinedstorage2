@@ -19,9 +19,18 @@ public interface CancellationToken {
         public void cancel() {
             // no op
         }
+
+        @Override
+        public long timeRemainingMillis() {
+            return Long.MAX_VALUE;
+        }
     };
 
     boolean isCancelled();
 
     void cancel();
+
+    default long timeRemainingMillis() {
+        return isCancelled() ? 0L : Long.MAX_VALUE;
+    }
 }

@@ -725,6 +725,57 @@ class LinearAutocraftingNetworkComponentImplTest {
     }
 
     @Test
+    void shouldShowAvailableAndToCraftForSameIntermediateItemInMissingPreview() {
+        // Arrange: A -> 4B, 2(any plank B/B') -> 4C, 4B + 2C -> 3D.
+        // Keep some B in storage so B must appear as both available and to-craft.
+        rootStorage.addSource(new StorageImpl());
+        rootStorage.insert(B, 2, Action.EXECUTE, Actor.EMPTY);
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 4).build());
+        provider.setPattern(2, pattern().ingredient(2).input(B).input(B_ALTERNATIVE).end().output(C, 4).build());
+        provider.setPattern(3, pattern().ingredient(B, 4).ingredient(C, 2).output(D, 3).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<Preview> preview = sut.getPreview(D, 1, CancellationToken.NONE).join();
+
+        // Assert
+        assertThat(preview).isPresent();
+        assertThat(preview.get().type()).isEqualTo(PreviewType.MISSING_RESOURCES);
+        assertThat(preview.get().items())
+            .anyMatch(item -> item.resource().equals(B) && item.available() > 0 && item.toCraft() > 0)
+            .noneMatch(item -> item.resource().equals(B) && item.missing() > 0);
+    }
+
+    @Test
+    void shouldOrderPreviewItemsTopDownWhenNoLoops() {
+        // Arrange: A -> B, B -> C. Preview order should be C, B, A.
+        rootStorage.addSource(new StorageImpl());
+        rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 1).build());
+        provider.setPattern(2, pattern().ingredient(B, 1).output(C, 1).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<Preview> preview = sut.getPreview(C, 1, CancellationToken.NONE).join();
+
+        // Assert
+        assertThat(preview).isPresent();
+        final List<PreviewItem> items = preview.get().items();
+        final int cIndex = indexOfResource(items, C);
+        final int bIndex = indexOfResource(items, B);
+        final int aIndex = indexOfResource(items, A);
+        assertThat(cIndex).isGreaterThanOrEqualTo(0);
+        assertThat(bIndex).isGreaterThanOrEqualTo(0);
+        assertThat(aIndex).isGreaterThanOrEqualTo(0);
+        assertThat(cIndex).isLessThan(bIndex);
+        assertThat(bIndex).isLessThan(aIndex);
+    }
+
+    @Test
     void shouldReportBaseResourceDeficitInTreePreviewForFuzzyIntermediateChain() {
         // Arrange: A -> 4B, 2(any plank B/B') -> 4C, 4B + 2C -> 3D.
         // Missing resources should point to A (base), not B (intermediate).
@@ -787,6 +838,113 @@ class LinearAutocraftingNetworkComponentImplTest {
             .containsExactlyInAnyOrder(new ResourceAmount(A, 5), new ResourceAmount(B, 6));
     }
 
+    @Test
+    void shouldBuildTreePreviewBackwardsForAcyclicSteps() {
+        // Arrange: A -> B -> C. Tree should be C -> B -> A.
+        rootStorage.addSource(new StorageImpl());
+        rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 1).build());
+        provider.setPattern(2, pattern().ingredient(B, 1).output(C, 1).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<TreePreview> preview = sut.getTreePreview(C, 1, CancellationToken.NONE).join();
+
+        // Assert
+        assertThat(preview).isPresent();
+        assertThat(preview.get().type()).isEqualTo(PreviewType.SUCCESS);
+        final TreePreviewNode rootNode = preview.get().rootNode();
+        assertThat(rootNode).isNotNull();
+        assertThat(rootNode.getResource()).isEqualTo(C);
+        assertThat(rootNode.getChildren()).singleElement().satisfies(bNode -> {
+            assertThat(bNode.getResource()).isEqualTo(B);
+            assertThat(bNode.getChildren()).singleElement().satisfies(aNode -> {
+                assertThat(aNode.getResource()).isEqualTo(A);
+                assertThat(aNode.getAvailable()).isEqualTo(1);
+                assertThat(aNode.getMissing()).isZero();
+            });
+        });
+    }
+
+    @Test
+    void shouldBuildTreePreviewBackwardsForCycleStepPlan() {
+        // Arrange: A + B -> 2A (A is consumed and produced).
+        rootStorage.addSource(new StorageImpl());
+        rootStorage.insert(A, 1, Action.EXECUTE, Actor.EMPTY);
+        rootStorage.insert(B, 10, Action.EXECUTE, Actor.EMPTY);
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).ingredient(B, 1).output(A, 2).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<TreePreview> preview = sut.getTreePreview(A, 4, CancellationToken.NONE).join();
+
+        // Assert
+        assertThat(preview).isPresent();
+        assertThat(preview.get().type()).isEqualTo(PreviewType.SUCCESS);
+        assertThat(preview.get().rootNode()).isNotNull();
+        final List<TreePreviewNode> nodes = flattenTree(preview.get().rootNode());
+        assertThat(nodes).hasSizeLessThanOrEqualTo(12);
+        assertThat(nodes)
+            .anyMatch(node -> node.getResource().equals(B) && node.getAvailable() > 0)
+            .noneMatch(node -> node.getMissing() > 0);
+    }
+
+    @Test
+    void shouldRoundTreePreviewCraftingToRecipeBatchSize() {
+        // Arrange: 2A -> 4B and 6B -> 1C. Crafting 1C requires 6B, but B is crafted in batches of 4.
+        rootStorage.addSource(new StorageImpl());
+        rootStorage.insert(A, 4, Action.EXECUTE, Actor.EMPTY);
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 2).output(B, 4).build());
+        provider.setPattern(2, pattern().ingredient(B, 6).output(C, 1).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<TreePreview> preview = sut.getTreePreview(C, 1, CancellationToken.NONE).join();
+
+        // Assert: tree should show 8B crafted from 4A, not 6B from 3A.
+        assertThat(preview).isPresent();
+        assertThat(preview.get().type()).isEqualTo(PreviewType.SUCCESS);
+        final List<TreePreviewNode> nodes = flattenTree(preview.get().rootNode());
+        assertThat(nodes).anyMatch(node -> node.getResource().equals(B) && node.getToCraft() == 8);
+        assertThat(nodes).anyMatch(node -> node.getResource().equals(A) && node.getAmount() == 4 && node.getMissing() == 0);
+    }
+
+    @Test
+    void shouldKeepDeficitsOnLeafNodesInTreePreview() {
+        // Arrange: A -> 4B, 6B -> 1C. No A in storage means deficit should be on leaf A, not directly under C.
+        rootStorage.addSource(new StorageImpl());
+
+        final PatternProviderNetworkNode provider = new PatternProviderNetworkNode(0, 5);
+        provider.setPattern(1, pattern().ingredient(A, 1).output(B, 4).build());
+        provider.setPattern(2, pattern().ingredient(B, 6).output(C, 1).build());
+        sut.onContainerAdded(() -> provider);
+
+        // Act
+        final Optional<TreePreview> preview = sut.getTreePreview(C, 1, CancellationToken.NONE).join();
+
+        // Assert
+        assertThat(preview).isPresent();
+        assertThat(preview.get().type()).isEqualTo(PreviewType.MISSING_RESOURCES);
+        final TreePreviewNode rootNode = preview.get().rootNode();
+        assertThat(rootNode).isNotNull();
+        final TreePreviewNode bNode = rootNode.getChildren().stream()
+            .filter(node -> node.getResource().equals(B))
+            .findFirst()
+            .orElse(null);
+        assertThat(bNode).isNotNull();
+        assertThat(bNode.getMissing()).isZero();
+        assertThat(bNode.getChildren())
+            .anyMatch(node -> node.getResource().equals(A) && node.getMissing() > 0);
+        assertThat(rootNode.getChildren())
+            .noneMatch(node -> node.getResource().equals(A) && node.getMissing() > 0);
+    }
+
     private static List<TreePreviewNode> flattenTree(final TreePreviewNode rootNode) {
         if (rootNode == null) {
             return List.of();
@@ -802,6 +960,16 @@ class LinearAutocraftingNetworkComponentImplTest {
         for (final TreePreviewNode child : node.getChildren()) {
             collectNodes(child, nodes);
         }
+    }
+
+    private static int indexOfResource(final List<PreviewItem> items,
+                                       final com.refinedmods.refinedstorage.api.resource.ResourceKey resource) {
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).resource().equals(resource)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static class LpAutocraftingNetworkComponent extends AutocraftingNetworkComponentImpl {

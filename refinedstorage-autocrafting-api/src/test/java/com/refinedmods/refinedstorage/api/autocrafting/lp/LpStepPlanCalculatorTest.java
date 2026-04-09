@@ -1,6 +1,7 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
+import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.core.Action;
 import com.refinedmods.refinedstorage.api.storage.Actor;
@@ -187,6 +188,20 @@ class LpStepPlanCalculatorTest {
         );
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    void shouldReturnZeroMaxAmountWhenCalculationIsCancelled() {
+        final long result = LpStepPlanCalculator.calculateMaxAmount(
+            List.of(pattern().ingredient(A, 1).output(B, 1).build()),
+            LOGGER,
+            new RootStorageImpl(),
+            B,
+            1,
+            new CancelledCancellationToken()
+        );
+
+        assertThat(result).isZero();
     }
 
     @Test

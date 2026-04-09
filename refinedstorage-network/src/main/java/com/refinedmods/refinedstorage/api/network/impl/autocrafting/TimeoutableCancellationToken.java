@@ -21,4 +21,19 @@ public class TimeoutableCancellationToken implements CancellationToken {
     public void cancel() {
         cancelled.set(true);
     }
+
+    @Override
+    public long timeRemainingMillis() {
+        if (cancelled.get()) {
+            return 0L;
+        }
+
+        final long elapsed = System.currentTimeMillis() - createdAt;
+        final long remaining = TIMEOUT_MS - elapsed;
+        if (remaining <= 0L) {
+            cancel();
+            return 0L;
+        }
+        return remaining;
+    }
 }
