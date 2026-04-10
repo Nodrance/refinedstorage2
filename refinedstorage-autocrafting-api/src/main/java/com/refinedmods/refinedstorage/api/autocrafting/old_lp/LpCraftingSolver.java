@@ -3,14 +3,6 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
-import java.io.IOException;
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Comparator;
@@ -517,7 +509,6 @@ public final class LpCraftingSolver {
     private static final class FlowSearchModel {
         private static final Logger LOGGER = LoggerFactory.getLogger(FlowSearchModel.class);
         private static final long WAIT_SLICE_MILLIS = 250L;
-        private static final DateTimeFormatter THREAD_DUMP_TIMESTAMP_FORMATTER = DateTimeFormatter.ISO_INSTANT;
         private final List<LpPatternRecipe> recipes;
         private final List<LpPatternRecipe> reversePriorityRecipes;
         private final Set<ResourceKey> relevantResources;
@@ -805,12 +796,8 @@ public final class LpCraftingSolver {
                     maximize,
                     lockedRecipeValues
                 );
-                logThreadDump();
-                persistThreadDumpToFile("solve-timeout");
             } else {
-                LOGGER.error("[LP] Timed out {} due to cancellation deadline. Dumping thread states.", description);
-                logThreadDump();
-                persistThreadDumpToFile("model-construction-timeout");
+                LOGGER.error("[LP] Timed out {} due to cancellation deadline.", description);
             }
             workerThread.interrupt();
             throw new CancellationException("Timed out " + description);
@@ -819,40 +806,6 @@ public final class LpCraftingSolver {
         private void throwIfCancelled() {
             if (cancellationToken.isCancelled()) {
                 throw new CancellationException("LP solver cancelled");
-            }
-        }
-
-        private void logThreadDump() {
-            final ThreadInfo[] threadInfos = ManagementFactory.getThreadMXBean().dumpAllThreads(true, true);
-            LOGGER.error("[LP] Thread dump size={}", threadInfos.length);
-            for (final ThreadInfo threadInfo : threadInfos) {
-                LOGGER.error("[LP] Thread state dump:{}{}", System.lineSeparator(), threadInfo);
-            }
-        }
-
-        private void persistThreadDumpToFile(final String reason) {
-            final ThreadInfo[] threadInfos = ManagementFactory.getThreadMXBean().dumpAllThreads(true, true);
-            final String timestamp = THREAD_DUMP_TIMESTAMP_FORMATTER.format(Instant.now()).replace(':', '-');
-            final String fileName = "rs-lp-thread-dump-" + reason + "-" + timestamp + ".log";
-            final Path dumpFilePath = Path.of("logs", fileName);
-
-            final StringBuilder dump = new StringBuilder(8192)
-                .append("Refined Storage LP thread dump").append(System.lineSeparator())
-                .append("Reason: ").append(reason).append(System.lineSeparator())
-                .append("Timestamp: ").append(timestamp).append(System.lineSeparator())
-                .append("Thread count: ").append(threadInfos.length).append(System.lineSeparator())
-                .append(System.lineSeparator());
-
-            for (final ThreadInfo threadInfo : threadInfos) {
-                dump.append(threadInfo).append(System.lineSeparator());
-            }
-
-            try {
-                Files.createDirectories(dumpFilePath.getParent());
-                Files.writeString(dumpFilePath, dump.toString(), StandardCharsets.UTF_8);
-                LOGGER.error("[LP] Wrote thread dump to {}", dumpFilePath.toAbsolutePath());
-            } catch (final IOException e) {
-                LOGGER.error("[LP] Failed to write thread dump to {}", dumpFilePath.toAbsolutePath(), e);
             }
         }
 

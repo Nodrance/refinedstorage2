@@ -3,13 +3,22 @@ package com.refinedmods.refinedstorage.api.network.impl.autocrafting;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.ConcreteRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingSolver;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpDispatcherHelper;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPlanningHelper;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPreviewCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpExecutionPlanStep;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.LpPatternRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.LpResourceSet;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpStepPlan;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.LpStepPlanCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.LpTaskDispatcher;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.MultiResourceKey;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.PreviewCalculator;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeApplicationSet;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeApplicationStep;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeDesanitizer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.ResourcePool;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewItem;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
@@ -32,10 +41,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -54,16 +65,26 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
                                                            final CancellationToken cancellationToken) {
         ResourceAmount.validate(resource, amount);
         return CompletableFuture.supplyAsync(() -> {
+            if (cancellationToken.isCancelled()) {
+                return Optional.of(new Preview(PreviewType.CANCELLED, Collections.emptyList(), Collections.emptyList()));
+            }
             final RootStorage rootStorage = state.getRootStorageProvider().get();
-            final Collection<Pattern> relevantPatterns =
-                LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, state.getPatternRepository());
-            return Optional.of(LpPreviewCalculator.calculatePreview(
-                relevantPatterns,
+            final CraftingInitializer.Initialization initialization = CraftingInitializer.initialize(
                 rootStorage,
+                state.getPatternRepository(),
                 resource,
                 amount,
                 cancellationToken
-            ));
+            );
+            final Optional<RecipeApplicationPath> path = new CraftingSolver(cancellationToken).solve(
+                initialization.concreteRecipes(),
+                initialization.relevantStartingResources(),
+                initialization.target()
+            ).map(p -> desanitizeRecipeApplicationPath(p, initialization.relevantStartingResources(), cancellationToken));
+            if (path.isEmpty()) {
+                return Optional.of(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
+            }
+            return Optional.of(PreviewCalculator.calculatePreview(path.get(), cancellationToken));
         }, state.getExecutorService());
     }
 
@@ -78,29 +99,29 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             }
 
             final RootStorage rootStorage = state.getRootStorageProvider().get();
-            final Collection<Pattern> relevantPatterns =
-                LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, state.getPatternRepository());
-
-            final Optional<LpStepPlan> stepPlan = LpStepPlanCalculator.calculateSteps(
-                relevantPatterns,
-                LOGGER,
+            final CraftingInitializer.Initialization initialization = CraftingInitializer.initialize(
                 rootStorage,
+                state.getPatternRepository(),
                 resource,
                 amount,
                 cancellationToken
             );
+            final Optional<RecipeApplicationPath> recipeApplicationPath = new CraftingSolver(cancellationToken).solve(
+                initialization.concreteRecipes(),
+                initialization.relevantStartingResources(),
+                initialization.target()
+            ).map(path -> desanitizeRecipeApplicationPath(path, initialization.relevantStartingResources(), cancellationToken));
+
+            final Optional<LpStepPlan> stepPlan = recipeApplicationPath.map(path -> toLpStepPlan(
+                path.steps(),
+                initialization.relevantPatterns()
+            ));
             if (stepPlan.isPresent()) {
                 return Optional.of(buildTreePreviewFromSteps(resource, amount, rootStorage, stepPlan.get()));
             }
 
-            final Preview preview = LpPreviewCalculator.calculatePreview(
-                relevantPatterns,
-                rootStorage,
-                resource,
-                amount,
-                cancellationToken
-            );
-            return Optional.of(buildFallbackTreePreview(resource, amount, preview, relevantPatterns));
+            final Preview preview = new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList());
+            return Optional.of(buildFallbackTreePreview(resource, amount, preview, initialization.relevantPatterns()));
         }, state.getExecutorService());
     }
 
@@ -113,11 +134,7 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
                 return 0L;
             }
             final RootStorage rootStorage = state.getRootStorageProvider().get();
-            final Collection<Pattern> relevantPatterns =
-                LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, state.getPatternRepository());
-            return LpStepPlanCalculator.calculateMaxAmount(
-                relevantPatterns,
-                LOGGER,
+            return findMaxCraftableAmountViaLp(
                 rootStorage,
                 resource,
                 Long.MAX_VALUE,
@@ -134,11 +151,7 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
                                       final CancellationToken cancellationToken) {
         ResourceAmount.validate(resource, amount);
         final RootStorage rootStorage = state.getRootStorageProvider().get();
-        final Collection<Pattern> relevantPatterns =
-            LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, state.getPatternRepository());
-        return LpStepPlanCalculator.calculateSteps(
-            relevantPatterns,
-            LOGGER,
+        return calculateStepsViaInitializer(
             rootStorage,
             resource,
             amount,
@@ -162,11 +175,7 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
 
         final RootStorage rootStorage = state.getRootStorageProvider().get();
         final long correctedAmount = amount - currentlyCrafting;
-        final Collection<Pattern> relevantPatterns =
-            LpPlanningHelper.collectRelevantPatternsForLp(resource, rootStorage, state.getPatternRepository());
-        return LpStepPlanCalculator.calculateSteps(
-            relevantPatterns,
-            LOGGER,
+        return calculateStepsViaInitializer(
             rootStorage,
             resource,
             correctedAmount,
@@ -175,7 +184,6 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             .flatMap(steps -> addLpDispatcherTask(resource, correctedAmount, actor, steps, false))
             .map(taskId -> AutocraftingNetworkComponent.EnsureResult.TASK_CREATED)
             .orElseGet(() -> ensureTaskForCraftableAmountViaLp(
-                relevantPatterns,
                 rootStorage,
                 resource,
                 correctedAmount,
@@ -185,7 +193,6 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
     }
 
     private AutocraftingNetworkComponent.EnsureResult ensureTaskForCraftableAmountViaLp(
-        final Collection<Pattern> relevantPatterns,
         final RootStorage rootStorage,
         final ResourceKey resource,
         final long amount,
@@ -197,7 +204,6 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
         }
 
         final long correctedAmount = findMaxCraftableAmountViaLp(
-            relevantPatterns,
             rootStorage,
             resource,
             amount,
@@ -207,9 +213,7 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             return AutocraftingNetworkComponent.EnsureResult.MISSING_RESOURCES;
         }
 
-        return LpStepPlanCalculator.calculateSteps(
-            state.getPatternRepository().getAll(),
-            LOGGER,
+        return calculateStepsViaInitializer(
             rootStorage,
             resource,
             correctedAmount,
@@ -222,8 +226,7 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             .orElse(AutocraftingNetworkComponent.EnsureResult.MISSING_RESOURCES);
     }
 
-    private long findMaxCraftableAmountViaLp(final Collection<Pattern> relevantPatterns,
-                                             final RootStorage rootStorage,
+    private long findMaxCraftableAmountViaLp(final RootStorage rootStorage,
                                              final ResourceKey resource,
                                              final long amount,
                                              final CancellationToken cancellationToken) {
@@ -231,31 +234,26 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             return 0;
         }
 
-        final long lpMax = LpStepPlanCalculator.calculateMaxAmount(
-            relevantPatterns,
-            LOGGER,
-            rootStorage,
-            resource,
-            amount,
-            cancellationToken
-        );
-        if (lpMax <= 0) {
-            return 0;
-        }
-
-        if (!LpStepPlanCalculator.hasPatternRecipeCycles(relevantPatterns)) {
-            return lpMax;
-        }
-
         long low = 1;
-        long high = lpMax;
+        long high = 1;
+        while (high < amount && !cancellationToken.isCancelled()) {
+            if (calculateStepsViaInitializer(rootStorage, resource, high, cancellationToken).isPresent()) {
+                low = high;
+                if (high > Long.MAX_VALUE / 2) {
+                    high = amount;
+                } else {
+                    high = Math.min(amount, high * 2);
+                }
+            } else {
+                break;
+            }
+        }
+
         long best = 0;
 
         while (low <= high && !cancellationToken.isCancelled()) {
             final long middle = low + ((high - low) / 2);
-            final boolean craftable = LpStepPlanCalculator.calculateSteps(
-                relevantPatterns,
-                LOGGER,
+            final boolean craftable = calculateStepsViaInitializer(
                 rootStorage,
                 resource,
                 middle,
@@ -270,6 +268,171 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
         }
 
         return best;
+    }
+
+    private Optional<LpStepPlan> calculateStepsViaInitializer(
+        final RootStorage rootStorage,
+        final ResourceKey resource,
+        final long amount,
+        final CancellationToken cancellationToken
+    ) {
+        if (cancellationToken.isCancelled()) {
+            return Optional.empty();
+        }
+
+        final CraftingInitializer.Initialization initialization = CraftingInitializer.initialize(
+            rootStorage,
+            state.getPatternRepository(),
+            resource,
+            amount,
+            cancellationToken
+        );
+        final Optional<RecipeApplicationPath> solved = new CraftingSolver(cancellationToken).solve(
+            initialization.concreteRecipes(),
+            initialization.relevantStartingResources(),
+            initialization.target()
+        );
+        if (solved.isEmpty()) {
+            return Optional.empty();
+        }
+
+        final RecipeApplicationPath desanitized = desanitizeRecipeApplicationPath(
+            solved.get(),
+            initialization.relevantStartingResources(),
+            cancellationToken
+        );
+        return Optional.of(toLpStepPlan(desanitized.steps(), initialization.relevantPatterns()));
+    }
+
+    private static RecipeApplicationPath desanitizeRecipeApplicationPath(
+        final RecipeApplicationPath path,
+        final ResourcePool availableResources,
+        final CancellationToken cancellationToken
+    ) {
+        LOGGER.info(
+            "[LP] desanitizeRecipeApplicationPath start: steps={} available={} used={} missing={} final={}",
+            path.steps().size(),
+            summarizePool(availableResources),
+            summarizePool(path.applicationSet().usedResources()),
+            summarizePool(path.applicationSet().missingResources()),
+            summarizePool(path.applicationSet().finalInventoryValues())
+        );
+
+        final List<RecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanSteps(
+            path.steps(),
+            availableResources,
+            cancellationToken
+        );
+
+        final RecipeApplicationSet original = path.applicationSet();
+        final ResourcePool decodedUsed = RecipeDesanitizer.decodeSanitizedResources(
+            original.usedResources(),
+            availableResources,
+            cancellationToken
+        );
+        final ResourcePool decodedMissing = RecipeDesanitizer.decodeSanitizedResources(
+            original.missingResources(),
+            availableResources,
+            cancellationToken
+        );
+        final ResourcePool decodedFinal = RecipeDesanitizer.decodeSanitizedResources(
+            original.finalInventoryValues(),
+            availableResources,
+            cancellationToken
+        );
+
+        final List<ResourceKey> decodedRelevantResources = decodeRelevantResourceKeys(original.relevantResourceKeys());
+        final RecipeApplicationSet decodedSet = new RecipeApplicationSet(
+            original.recipes(),
+            original.recipeValues(),
+            decodedUsed,
+            decodedFinal,
+            decodedMissing,
+            decodedRelevantResources
+        );
+
+        LOGGER.info(
+            "[LP] desanitizeRecipeApplicationPath result: steps={} used={} missing={} final={} relevantResources={}",
+            decodedSteps.size(),
+            summarizePool(decodedUsed),
+            summarizePool(decodedMissing),
+            summarizePool(decodedFinal),
+            decodedRelevantResources.size()
+        );
+
+        return new RecipeApplicationPath(decodedSet, decodedSteps);
+    }
+
+    private static String summarizePool(final ResourcePool pool) {
+        return "{resources=" + countPoolEntries(pool) + ", total=" + sumPoolAmounts(pool) + ", values=" + pool + "}";
+    }
+
+    private static int countPoolEntries(final ResourcePool pool) {
+        int count = 0;
+        for (final Map.Entry<ResourceKey, Long> ignored : pool) {
+            count++;
+        }
+        return count;
+    }
+
+    private static long sumPoolAmounts(final ResourcePool pool) {
+        long total = 0L;
+        for (final Map.Entry<ResourceKey, Long> entry : pool) {
+            total += entry.getValue();
+        }
+        return total;
+    }
+
+    private static List<ResourceKey> decodeRelevantResourceKeys(final List<ResourceKey> relevantResourceKeys) {
+        final LinkedHashSet<ResourceKey> decoded = new LinkedHashSet<>();
+        for (final ResourceKey key : relevantResourceKeys) {
+            if (key instanceof MultiResourceKey multiResourceKey) {
+                decoded.addAll(multiResourceKey.members());
+            } else {
+                decoded.add(key);
+            }
+        }
+        return List.copyOf(decoded);
+    }
+
+    private static LpStepPlan toLpStepPlan(
+        final List<RecipeApplicationStep> steps,
+        final Collection<Pattern> patterns
+    ) {
+        final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
+        for (final Pattern pattern : patterns) {
+            patternsById.put(pattern.id(), pattern);
+        }
+
+        final List<LpExecutionPlanStep> lpSteps = new ArrayList<>();
+        for (final RecipeApplicationStep step : steps) {
+            final ConcreteRecipe recipe = step.recipe();
+            final Pattern sourcePattern = patternsById.get(recipe.sourcePatternId());
+            if (sourcePattern == null) {
+                continue;
+            }
+            final int priority = recipe.priority() > Integer.MAX_VALUE
+                ? Integer.MAX_VALUE
+                : (recipe.priority() < Integer.MIN_VALUE ? Integer.MIN_VALUE : (int) recipe.priority());
+            final LpPatternRecipe lpRecipe = new LpPatternRecipe(
+                sourcePattern,
+                toLpResourceSet(recipe.input()),
+                toLpResourceSet(recipe.output()),
+                priority,
+                null
+            );
+            lpSteps.add(new LpExecutionPlanStep(lpRecipe, step.timesApplied()));
+        }
+
+        return new LpStepPlan(lpSteps, false);
+    }
+
+    private static LpResourceSet toLpResourceSet(final ResourcePool resourcePool) {
+        final LpResourceSet result = new LpResourceSet();
+        for (final Map.Entry<ResourceKey, Long> entry : resourcePool) {
+            result.setAmount(entry.getKey(), entry.getValue());
+        }
+        return result;
     }
 
     private Optional<TaskId> addLpDispatcherTask(final ResourceKey resource,
