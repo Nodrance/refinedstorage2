@@ -22,17 +22,21 @@ public class RecipeAnalyzer {
 
    public static List<ResourceKey> collectLeafResources(final List<ConcreteRecipe> recipes) {
       Objects.requireNonNull(recipes, "recipes cannot be null");
-      final Set<ResourceKey> produced = new LinkedHashSet<>();
-      final Set<ResourceKey> consumed = new LinkedHashSet<>();
+      final Set<Object> produced = new LinkedHashSet<>();
+      final Set<Object> consumed = new LinkedHashSet<>();
       for (final ConcreteRecipe recipe : recipes) {
          produced.addAll(recipe.output().resourceKeys());
          consumed.addAll(recipe.input().resourceKeys());
       }
 
       final List<ResourceKey> leaves = new ArrayList<>();
-      for (final ResourceKey resource : consumed) {
+      for (final Object resource : consumed) {
          if (!produced.contains(resource)) {
-            leaves.add(resource);
+            if (resource instanceof ResourceKey resourceKey) {
+               leaves.add(resourceKey);
+            } else if (resource instanceof MultiResourceKey multiResourceKey) {
+               leaves.addAll(multiResourceKey.members());
+            }
          }
       }
       return leaves;
@@ -104,9 +108,9 @@ public class RecipeAnalyzer {
       return new CycleDetectionResult(inLoopByRecipeId, cycles);
    }
 
-   public static Set<ResourceKey> collectRelevantResourceKeys(final List<ConcreteRecipe> recipes) {
+   public static Set<Object> collectRelevantResourceKeys(final List<ConcreteRecipe> recipes) {
       Objects.requireNonNull(recipes, "recipes cannot be null");
-      final Set<ResourceKey> relevant = new LinkedHashSet<>();
+      final Set<Object> relevant = new LinkedHashSet<>();
       for (final ConcreteRecipe recipe : recipes) {
          relevant.addAll(recipe.output().resourceKeys());
          relevant.addAll(recipe.input().resourceKeys());
@@ -136,11 +140,11 @@ public class RecipeAnalyzer {
             .thenComparing(ConcreteRecipe::recipeId))
          .toList();
 
-      final Set<ResourceKey> seenOutputResources = new LinkedHashSet<>();
+      final Set<Object> seenOutputResources = new LinkedHashSet<>();
       final Set<UUID> selectedRecipeIds = new LinkedHashSet<>();
       for (final ConcreteRecipe recipe : sorted) {
          boolean producesNewResource = false;
-         for (final ResourceKey resource : recipe.output().resourceKeys()) {
+         for (final Object resource : recipe.output().resourceKeys()) {
             if (!seenOutputResources.contains(resource)) {
                producesNewResource = true;
                break;
@@ -163,11 +167,11 @@ public class RecipeAnalyzer {
    }
 
    private static TraversalState initializeTraversalState(final ResourcePool target) {
-      final Map<ResourceKey, PriorityKey> bestResourcePriorities = new LinkedHashMap<>();
+      final Map<Object, PriorityKey> bestResourcePriorities = new LinkedHashMap<>();
       final Map<UUID, PriorityKey> bestRecipePriorities = new LinkedHashMap<>();
       final Deque<ResourcePriorityEntry> queue = new ArrayDeque<>();
       final PriorityKey basePriority = new PriorityKey();
-      for (final ResourceKey targetResource : target.resourceKeys()) {
+      for (final Object targetResource : target.resourceKeys()) {
          bestResourcePriorities.put(targetResource, basePriority);
          queue.addLast(new ResourcePriorityEntry(targetResource, basePriority));
       }
@@ -217,7 +221,7 @@ public class RecipeAnalyzer {
       final PriorityKey candidateRecipePriority,
       final TraversalState state
    ) {
-      for (final ResourceKey inputResource : recipe.input().resourceKeys()) {
+      for (final Object inputResource : recipe.input().resourceKeys()) {
          final PriorityKey currentInputPriority = state.bestResourcePriorities().get(inputResource);
          if (currentInputPriority != null && candidateRecipePriority.compareTo(currentInputPriority) >= 0) {
             continue;
@@ -304,20 +308,20 @@ public class RecipeAnalyzer {
       final List<ConcreteRecipe> recipes,
       final ResourcePool target
    ) {
-      final Map<ResourceKey, List<ConcreteRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
+      final Map<Object, List<ConcreteRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
       final Set<UUID> loopClosingRecipeIds = new LinkedHashSet<>();
-      for (final ResourceKey targetResource : target.resourceKeys()) {
-         final Set<ResourceKey> pathResources = new LinkedHashSet<>();
+      for (final Object targetResource : target.resourceKeys()) {
+         final Set<Object> pathResources = new LinkedHashSet<>();
          pathResources.add(targetResource);
          walkLoopClosingRecipes(targetResource, outputToRecipes, pathResources, loopClosingRecipeIds);
       }
       return loopClosingRecipeIds;
    }
 
-   private static Map<ResourceKey, List<ConcreteRecipe>> buildOutputToRecipes(final List<ConcreteRecipe> recipes) {
-      final Map<ResourceKey, List<ConcreteRecipe>> outputToRecipes = new HashMap<>();
+   private static Map<Object, List<ConcreteRecipe>> buildOutputToRecipes(final List<ConcreteRecipe> recipes) {
+      final Map<Object, List<ConcreteRecipe>> outputToRecipes = new HashMap<>();
       for (final ConcreteRecipe recipe : recipes) {
-         for (final ResourceKey outputResource : recipe.output().resourceKeys()) {
+         for (final Object outputResource : recipe.output().resourceKeys()) {
             outputToRecipes.computeIfAbsent(outputResource, ignored -> new ArrayList<>()).add(recipe);
          }
       }
@@ -325,9 +329,9 @@ public class RecipeAnalyzer {
    }
 
    private static void walkLoopClosingRecipes(
-      final ResourceKey resource,
-      final Map<ResourceKey, List<ConcreteRecipe>> outputToRecipes,
-      final Set<ResourceKey> pathResources,
+      final Object resource,
+      final Map<Object, List<ConcreteRecipe>> outputToRecipes,
+      final Set<Object> pathResources,
       final Set<UUID> loopClosingRecipeIds
    ) {
       final List<ConcreteRecipe> producingRecipes = outputToRecipes.get(resource);
@@ -335,7 +339,7 @@ public class RecipeAnalyzer {
          return;
       }
       for (final ConcreteRecipe recipe : producingRecipes) {
-         for (final ResourceKey inputResource : recipe.input().resourceKeys()) {
+         for (final Object inputResource : recipe.input().resourceKeys()) {
             if (pathResources.contains(inputResource)) {
                loopClosingRecipeIds.add(recipe.recipeId());
                continue;
@@ -351,7 +355,7 @@ public class RecipeAnalyzer {
       final ConcreteRecipe fromRecipe,
       final ConcreteRecipe toRecipe
    ) {
-      for (final ResourceKey outputResource : fromRecipe.output().resourceKeys()) {
+      for (final Object outputResource : fromRecipe.output().resourceKeys()) {
          if (consumes(toRecipe, outputResource)) {
             return true;
          }
@@ -359,11 +363,11 @@ public class RecipeAnalyzer {
       return false;
    }
 
-   private static boolean produces(final ConcreteRecipe recipe, final ResourceKey resource) {
+   private static boolean produces(final ConcreteRecipe recipe, final Object resource) {
       return recipe.output().getAmount(resource) > 0;
    }
 
-   private static boolean consumes(final ConcreteRecipe recipe, final ResourceKey resource) {
+   private static boolean consumes(final ConcreteRecipe recipe, final Object resource) {
       return recipe.input().getAmount(resource) > 0;
    }
 
@@ -436,11 +440,11 @@ public class RecipeAnalyzer {
       }
    }
 
-   private record ResourcePriorityEntry(ResourceKey resource, PriorityKey priority) {
+   private record ResourcePriorityEntry(Object resource, PriorityKey priority) {
    }
 
    private record TraversalState(
-      Map<ResourceKey, PriorityKey> bestResourcePriorities,
+      Map<Object, PriorityKey> bestResourcePriorities,
       Map<UUID, PriorityKey> bestRecipePriorities,
       Deque<ResourcePriorityEntry> queue
    ) {

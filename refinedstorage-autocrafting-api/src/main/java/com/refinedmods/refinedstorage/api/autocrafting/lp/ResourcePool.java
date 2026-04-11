@@ -14,16 +14,22 @@ import java.util.Set;
  * Describes a collection of resource keys and amounts.
  * Maps resources to amounts, supporting negative amounts for deficit tracking.
  * Zero amounts are not stored.
+ * 
+ * Keys can be either {@link ResourceKey} (concrete) or {@link MultiResourceKey} (LP fuzzy groupings).
+ * Conversion between these LP types and external types (Map, MutableResourceList, storage) is handled
+ * by {@link RecipeSanitizer} (external → LP) and {@link RecipeDesanitizer} (LP → external).
+ * 
+ * INTERNAL LP-ONLY: Do not use outside the LP solver implementation.
  * Equivalent to old_lp's LpResourceSet.
  */
-public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
-    private final Map<ResourceKey, Long> amounts;
+class ResourcePool implements Iterable<Map.Entry<Object, Long>> {
+    private final Map<Object, Long> amounts;
 
     public ResourcePool() {
         this.amounts = new LinkedHashMap<>();
     }
 
-    public ResourcePool(final Map<ResourceKey, Long> amounts) {
+    public ResourcePool(final Map<Object, Long> amounts) {
         this();
         Objects.requireNonNull(amounts, "amounts cannot be null");
         amounts.forEach(this::setAmount);
@@ -47,15 +53,15 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         return result;
     }
 
-    public Map<ResourceKey, Long> asMap() {
+    public Map<Object, Long> asMap() {
         return Collections.unmodifiableMap(amounts);
     }
 
-    public Set<ResourceKey> resourceKeys() {
+    public Set<Object> resourceKeys() {
         return Collections.unmodifiableSet(amounts.keySet());
     }
 
-    public long getAmount(final ResourceKey resource) {
+    public long getAmount(final Object resource) {
         Objects.requireNonNull(resource, "resource cannot be null");
         return amounts.getOrDefault(resource, 0L);
     }
@@ -72,7 +78,7 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         return amounts.isEmpty();
     }
 
-    public void setAmount(final ResourceKey resource, final long amount) {
+    public void setAmount(final Object resource, final long amount) {
         Objects.requireNonNull(resource, "resource cannot be null");
         if (amount == 0L) {
             amounts.remove(resource);
@@ -81,7 +87,7 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         amounts.put(resource, amount);
     }
 
-    public void addAmount(final ResourceKey resource, final long amount) {
+    public void addAmount(final Object resource, final long amount) {
         Objects.requireNonNull(resource, "resource cannot be null");
         if (amount == 0L) {
             return;
@@ -99,12 +105,12 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         other.amounts.forEach(this::subtractAmount);
     }
 
-    public void subtractAmount(final ResourceKey resource, final long amount) {
+    public void subtractAmount(final Object resource, final long amount) {
         addAmount(resource, -amount);
     }
 
     @Override
-    public java.util.Iterator<Map.Entry<ResourceKey, Long>> iterator() {
+    public java.util.Iterator<Map.Entry<Object, Long>> iterator() {
         return amounts.entrySet().iterator();
     }
 

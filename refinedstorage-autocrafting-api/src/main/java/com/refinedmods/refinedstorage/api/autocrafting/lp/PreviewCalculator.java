@@ -43,7 +43,7 @@ public final class PreviewCalculator {
 		final Map<ResourceKey, Long> missing = toPositiveMap(applicationSet.missingResources(), cancellationToken);
 		final Map<ResourceKey, Long> finalInventory = toRawMap(applicationSet.finalInventoryValues(), cancellationToken);
 
-		final Set<ResourceKey> universe = new LinkedHashSet<>(applicationSet.relevantResourceKeys());
+		final Set<ResourceKey> universe = toConcreteResourceKeys(applicationSet.relevantResourceKeys());
 		universe.addAll(crafted.keySet());
 		universe.addAll(used.keySet());
 		universe.addAll(missing.keySet());
@@ -111,11 +111,14 @@ public final class PreviewCalculator {
 			if (step.timesApplied() <= 0L) {
 				continue;
 			}
-			for (final Map.Entry<ResourceKey, Long> output : step.recipe().output()) {
+			for (final Map.Entry<Object, Long> output : step.recipe().output()) {
 				throwIfCancelled(cancellationToken);
+				if (!(output.getKey() instanceof ResourceKey resourceKey)) {
+					continue;
+				}
 				final long produced = output.getValue() * step.timesApplied();
 				if (produced > 0L) {
-					crafted.merge(output.getKey(), produced, Long::sum);
+					crafted.merge(resourceKey, produced, Long::sum);
 				}
 			}
 		}
@@ -127,10 +130,10 @@ public final class PreviewCalculator {
 		final CancellationToken cancellationToken
 	) {
 		final Map<ResourceKey, Long> result = new LinkedHashMap<>();
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<Object, Long> entry : pool) {
 			throwIfCancelled(cancellationToken);
-			if (entry.getValue() > 0L) {
-				result.put(entry.getKey(), entry.getValue());
+			if (entry.getValue() > 0L && entry.getKey() instanceof ResourceKey resourceKey) {
+				result.put(resourceKey, entry.getValue());
 			}
 		}
 		return result;
@@ -141,9 +144,11 @@ public final class PreviewCalculator {
 		final CancellationToken cancellationToken
 	) {
 		final Map<ResourceKey, Long> result = new LinkedHashMap<>();
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<Object, Long> entry : pool) {
 			throwIfCancelled(cancellationToken);
-			result.put(entry.getKey(), entry.getValue());
+			if (entry.getKey() instanceof ResourceKey resourceKey) {
+				result.put(resourceKey, entry.getValue());
+			}
 		}
 		return result;
 	}
@@ -172,14 +177,18 @@ public final class PreviewCalculator {
 			if (step.timesApplied() <= 0L) {
 				continue;
 			}
-			for (final Map.Entry<ResourceKey, Long> output : step.recipe().output()) {
+			for (final Map.Entry<Object, Long> output : step.recipe().output()) {
 				throwIfCancelled(cancellationToken);
-				final ResourceKey outputResource = output.getKey();
+				if (!(output.getKey() instanceof ResourceKey outputResource)) {
+					continue;
+				}
 				if (!nodes.contains(outputResource)) {
 					continue;
 				}
-				for (final Map.Entry<ResourceKey, Long> input : step.recipe().input()) {
-					final ResourceKey inputResource = input.getKey();
+				for (final Map.Entry<Object, Long> input : step.recipe().input()) {
+					if (!(input.getKey() instanceof ResourceKey inputResource)) {
+						continue;
+					}
 					if (!nodes.contains(inputResource) || outputResource.equals(inputResource)) {
 						continue;
 					}
@@ -247,6 +256,18 @@ public final class PreviewCalculator {
 		if (cancellationToken.isCancelled()) {
 			throw new java.util.concurrent.CancellationException("LP preview calculator cancelled");
 		}
+	}
+
+	private static Set<ResourceKey> toConcreteResourceKeys(final List<Object> resources) {
+		final Set<ResourceKey> result = new LinkedHashSet<>();
+		for (final Object resource : resources) {
+			if (resource instanceof ResourceKey resourceKey) {
+				result.add(resourceKey);
+			} else if (resource instanceof MultiResourceKey multiResourceKey) {
+				result.addAll(multiResourceKey.members());
+			}
+		}
+		return result;
 	}
 
 	private record Amounts(long available, long missing, long toCraft) {

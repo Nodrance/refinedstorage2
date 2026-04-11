@@ -415,7 +415,7 @@ public final class LinearSolver {
 
 	private static int countNonZeroResources(final ResourcePool finalInventoryValues) {
 		int count = 0;
-		for (final Map.Entry<ResourceKey, Long> entry : finalInventoryValues) {
+		for (final Map.Entry<Object, Long> entry : finalInventoryValues) {
 			if (entry.getValue() != 0L) {
 				count++;
 			}

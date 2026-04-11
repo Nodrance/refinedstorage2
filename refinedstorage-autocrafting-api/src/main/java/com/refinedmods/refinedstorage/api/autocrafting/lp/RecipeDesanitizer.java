@@ -5,6 +5,7 @@ import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -20,6 +21,167 @@ public final class RecipeDesanitizer {
 	private static final Logger LOGGER = LoggerFactory.getLogger(RecipeDesanitizer.class);
 
 	private RecipeDesanitizer() {
+	}
+
+	/**
+	 * Converts an LP ResourcePool (which may contain MultiResourceKey entries) to a concrete
+	 * Map<ResourceKey, Long> for external consumption.
+	 * MultiResourceKey entries are expanded to their member ResourceKeys with fallback allocation.
+	 * @param sanitizedPool resource pool potentially containing MultiResourceKey entries
+	 * @param availableResources available storage for allocation fallback
+	 * @return map with only concrete ResourceKey entries
+	 */
+	public static Map<ResourceKey, Long> convertResourcePoolToMap(
+		final ResourcePool sanitizedPool,
+		final ResourcePool availableResources
+	) {
+		Objects.requireNonNull(sanitizedPool, "sanitizedPool cannot be null");
+		Objects.requireNonNull(availableResources, "availableResources cannot be null");
+		return convertResourcePoolToMap(sanitizedPool, availableResources, CancellationToken.NONE);
+	}
+
+	/**
+	 * Converts an LP ResourcePool (which may contain MultiResourceKey entries) to a concrete
+	 * Map<ResourceKey, Long> for external consumption.
+	 * @param sanitizedPool resource pool potentially containing MultiResourceKey entries
+	 * @param availableResources available storage for allocation fallback
+	 * @param cancellationToken cancellation token to stop conversion
+	 * @return map with only concrete ResourceKey entries
+	 */
+	public static Map<ResourceKey, Long> convertResourcePoolToMap(
+		final ResourcePool sanitizedPool,
+		final ResourcePool availableResources,
+		final CancellationToken cancellationToken
+	) {
+		Objects.requireNonNull(sanitizedPool, "sanitizedPool cannot be null");
+		Objects.requireNonNull(availableResources, "availableResources cannot be null");
+		Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+
+		final Map<ResourceKey, Long> result = new LinkedHashMap<>();
+
+		for (final java.util.Map.Entry<Object, Long> entry : sanitizedPool) {
+			if (entry.getKey() instanceof ResourceKey resourceKey) {
+				// Concrete ResourceKey: direct mapping
+				result.put(resourceKey, entry.getValue());
+			} else if (entry.getKey() instanceof MultiResourceKey multiKey) {
+				// MultiResourceKey: allocate to members using fallback strategy
+				final long needed = entry.getValue();
+				allocateMultiKeyToConcreteResources(multiKey, needed, availableResources, result, cancellationToken);
+			}
+		}
+
+		return result;
+	}
+
+	/**
+	 * Allocates MultiResourceKey amounts to their concrete member ResourceKeys.
+	 * Uses greedy member-by-member allocation.
+	 */
+	private static void allocateMultiKeyToConcreteResources(
+		final MultiResourceKey multiKey,
+		final long needed,
+		final ResourcePool available,
+		final Map<ResourceKey, Long> result,
+		final CancellationToken cancellationToken
+	) {
+		long remaining = needed;
+		for (final ResourceKey member : multiKey.members()) {
+			if (remaining <= 0) {
+				break;
+			}
+			final long allocated = allocateConcrete(multiKey, remaining, available, member);
+			if (allocated > 0) {
+				result.merge(member, allocated, Long::sum);
+				remaining -= allocated;
+			}
+		}
+	}
+
+	/**
+	 * Allocates a single member from a MultiResourceKey.
+	 */
+	private static long allocateConcrete(
+		final MultiResourceKey multiKey,
+		final long needed,
+		final ResourcePool available,
+		final ResourceKey member
+	) {
+		final long available_amount = available.getAmount(member);
+		return Math.min(needed, Math.max(0L, available_amount));
+	}
+
+	/**
+	 * Decodes a set of sanitized resource keys (which may include MultiResourceKey) to concrete ResourceKey set.
+	 * MultiResourceKey entries are expanded to their member resources.
+	 */
+	public static java.util.Set<ResourceKey> decodeResourceKeys(final java.util.Collection<Object> sanitizedKeys) {
+		Objects.requireNonNull(sanitizedKeys, "sanitizedKeys cannot be null");
+		final java.util.Set<ResourceKey> result = new LinkedHashSet<>();
+		for (final Object key : sanitizedKeys) {
+			if (key instanceof ResourceKey resourceKey) {
+				result.add(resourceKey);
+			} else if (key instanceof MultiResourceKey multiKey) {
+				result.addAll(multiKey.members());
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * Converts an LP ResourcePool with sanitized keys to concrete Map<ResourceKey, Long>.
+	 * This is the desanitization entry point for converting from LP types back to external types.
+	 */
+	public static java.util.Map<ResourceKey, Long> convertFromLpResourcePool(
+		final ResourcePool lpResourcePool,
+		final ResourcePool availableResources,
+		final CancellationToken cancellationToken
+	) {
+		return convertResourcePoolToMap(lpResourcePool, availableResources, cancellationToken);
+	}
+
+	public static RecipeApplicationPath decodeRecipeApplicationPath(
+		final RecipeApplicationPath path,
+		final ResourcePool availableResources,
+		final CancellationToken cancellationToken
+	) {
+		Objects.requireNonNull(path, "path cannot be null");
+		Objects.requireNonNull(availableResources, "availableResources cannot be null");
+		Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+
+		final List<RecipeApplicationStep> decodedSteps = decodePlanSteps(
+			path.steps(),
+			availableResources,
+			cancellationToken
+		);
+
+		final RecipeApplicationSet original = path.applicationSet();
+		final ResourcePool decodedUsed = decodeSanitizedResources(
+			original.usedResources(),
+			availableResources,
+			cancellationToken
+		);
+		final ResourcePool decodedMissing = decodeSanitizedResources(
+			original.missingResources(),
+			availableResources,
+			cancellationToken
+		);
+		final ResourcePool decodedFinal = decodeSanitizedResources(
+			original.finalInventoryValues(),
+			availableResources,
+			cancellationToken
+		);
+
+		final List<ResourceKey> decodedRelevantResources = decodeRelevantResourceKeys(original.relevantResourceKeys());
+		final RecipeApplicationSet decodedSet = new RecipeApplicationSet(
+			original.recipes(),
+			original.recipeValues(),
+			decodedUsed,
+			decodedFinal,
+			decodedMissing,
+			new ArrayList<>(decodedRelevantResources)
+		);
+
+		return new RecipeApplicationPath(decodedSet, decodedSteps);
 	}
 
 	/**
@@ -49,49 +211,60 @@ public final class RecipeDesanitizer {
 
 		final ResourcePool decoded = ResourcePool.empty();
 		final ResourcePool remainingAvailable = availableResources.copy();
-		LOGGER.info(
-			"[LP] RecipeDesanitizer.decodeSanitizedResources start: sanitized={} available={}",
-			summarizePool(sanitizedResources),
-			summarizePool(availableResources)
-		);
+		// LOGGER.info(
+		// 	"[LP] RecipeDesanitizer.decodeSanitizedResources start: sanitized={} available={}",
+		// 	summarizePool(sanitizedResources),
+		// 	summarizePool(availableResources)
+		// );
 
-		for (final Map.Entry<ResourceKey, Long> entry : sanitizedResources) {
+		for (final Map.Entry<Object, Long> entry : sanitizedResources) {
 			throwIfCancelled(cancellationToken);
-			final ResourceKey resource = entry.getKey();
+			final Object resource = entry.getKey();
 			final long amount = entry.getValue();
 			if (amount <= 0L) {
 				continue;
 			}
 
 			if (resource instanceof MultiResourceKey multiResourceKey) {
-				final Map<ResourceKey, Long> allocation = multiResourceKey.allocateConcrete(amount, remainingAvailable);
+				final Map<ResourceKey, Long> allocation = allocateConcrete(multiResourceKey, amount, remainingAvailable);
 				final long allocatedTotal = sumMapValues(allocation);
-				LOGGER.info(
-					"[LP] RecipeDesanitizer.decodeSanitizedResources multi-key allocation: requestedResource={} requestedAmount={} allocated={} allocatedTotal={} unallocated={}",
-					resource,
-					amount,
-					allocation,
-					allocatedTotal,
-					Math.max(0L, amount - allocatedTotal)
-				);
+				// LOGGER.info(
+				// 	"[LP] RecipeDesanitizer.decodeSanitizedResources multi-key allocation: requestedResource={} requestedAmount={} allocated={} allocatedTotal={} unallocated={}",
+				// 	resource,
+				// 	amount,
+				// 	allocation,
+				// 	allocatedTotal,
+				// 	Math.max(0L, amount - allocatedTotal)
+				// );
 				for (final Map.Entry<ResourceKey, Long> allocated : allocation.entrySet()) {
 					decoded.addAmount(allocated.getKey(), allocated.getValue());
 					remainingAvailable.subtractAmount(allocated.getKey(), allocated.getValue());
 				}
-			} else {
-				LOGGER.info(
-					"[LP] RecipeDesanitizer.decodeSanitizedResources direct resource copy: resource={} amount={}",
-					resource,
-					amount
-				);
-				decoded.addAmount(resource, amount);
+				if (allocatedTotal < amount) {
+					final long unallocated = amount - allocatedTotal;
+					final ResourceKey fallbackResource = fallbackResourceFor(multiResourceKey);
+					decoded.addAmount(fallbackResource, unallocated);
+					// LOGGER.info(
+					// 	"[LP] RecipeDesanitizer.decodeSanitizedResources falling back unresolved multi-key amount to first option: multiKey={} fallbackResource={} unresolvedAmount={}",
+					// 	resource,
+					// 	fallbackResource,
+					// 	unallocated
+					// );
+				}
+			} else if (resource instanceof ResourceKey resourceKey) {
+				// LOGGER.info(
+				// 	"[LP] RecipeDesanitizer.decodeSanitizedResources direct resource copy: resource={} amount={}",
+				// 	resource,
+				// 	amount
+				// );
+				decoded.addAmount(resourceKey, amount);
 			}
 		}
-		LOGGER.info(
-			"[LP] RecipeDesanitizer.decodeSanitizedResources result: decoded={} remainingAvailable={}",
-			summarizePool(decoded),
-			summarizePool(remainingAvailable)
-		);
+		// LOGGER.info(
+		// 	"[LP] RecipeDesanitizer.decodeSanitizedResources result: decoded={} remainingAvailable={}",
+		// 	summarizePool(decoded),
+		// 	summarizePool(remainingAvailable)
+		// );
 
 		return decoded;
 	}
@@ -125,41 +298,41 @@ public final class RecipeDesanitizer {
 
 		final List<RecipeApplicationStep> decoded = new ArrayList<>();
 		final ResourcePool remainingAvailable = availableResources.copy();
-		LOGGER.info(
-			"[LP] RecipeDesanitizer.decodePlanSteps start: inputStepCount={} available={}",
-			steps.size(),
-			summarizePool(availableResources)
-		);
+		// LOGGER.info(
+		// 	"[LP] RecipeDesanitizer.decodePlanSteps start: inputStepCount={} available={}",
+		// 	steps.size(),
+		// 	summarizePool(availableResources)
+		// );
 
 		for (final RecipeApplicationStep step : steps) {
 			throwIfCancelled(cancellationToken);
 			final ConcreteRecipe recipe = step.recipe();
 			if (!containsMultiResourceKey(recipe.input())) {
-				LOGGER.info(
-					"[LP] RecipeDesanitizer.decodePlanSteps keeping step unchanged: recipeId={} timesApplied={} input={} output={}",
-					recipe.recipeId(),
-					step.timesApplied(),
-					summarizePool(recipe.input()),
-					summarizePool(recipe.output())
-				);
+				// LOGGER.info(
+				// 	"[LP] RecipeDesanitizer.decodePlanSteps keeping step unchanged: recipeId={} timesApplied={} input={} output={}",
+				// 	recipe.recipeId(),
+				// 	step.timesApplied(),
+				// 	summarizePool(recipe.input()),
+				// 	summarizePool(recipe.output())
+				// );
 				decoded.add(step);
 				continue;
 			}
-			LOGGER.info(
-				"[LP] RecipeDesanitizer.decodePlanSteps decoding sanitized step: recipeId={} timesApplied={} sanitizedInput={} output={}",
-				recipe.recipeId(),
-				step.timesApplied(),
-				summarizePool(recipe.input()),
-				summarizePool(recipe.output())
-			);
+			// LOGGER.info(
+			// 	"[LP] RecipeDesanitizer.decodePlanSteps decoding sanitized step: recipeId={} timesApplied={} sanitizedInput={} output={}",
+			// 	recipe.recipeId(),
+			// 	step.timesApplied(),
+			// 	summarizePool(recipe.input()),
+			// 	summarizePool(recipe.output())
+			// );
 
 			decodeSanitizedStep(step, remainingAvailable, decoded, cancellationToken);
 		}
-		LOGGER.info(
-			"[LP] RecipeDesanitizer.decodePlanSteps result: decodedStepCount={} remainingAvailable={}",
-			decoded.size(),
-			summarizePool(remainingAvailable)
-		);
+		// LOGGER.info(
+		// 	"[LP] RecipeDesanitizer.decodePlanSteps result: decodedStepCount={} remainingAvailable={}",
+		// 	decoded.size(),
+		// 	summarizePool(remainingAvailable)
+		// );
 
 		return List.copyOf(decoded);
 	}
@@ -176,23 +349,33 @@ public final class RecipeDesanitizer {
 		while (iterationsLeft > 0L) {
 			throwIfCancelled(cancellationToken);
 
-			final ResourcePool perIterationInput = decodeSingleIterationInput(recipe.input(), remainingAvailable);
+			final DecodedIterationInput decodedInput = decodeSingleIterationInput(recipe.input(), remainingAvailable);
+			if (!decodedInput.unresolvedInput().isEmpty()) {
+				// LOGGER.info(
+				// 	"[LP] RecipeDesanitizer.decodeSanitizedStep unresolved per-iteration input; stopping decode for recipeId={} unresolvedInput={} remainingAvailable={}",
+				// 	recipe.recipeId(),
+				// 	summarizePool(decodedInput.unresolvedInput()),
+				// 	summarizePool(remainingAvailable)
+				// );
+				break;
+			}
+			final ResourcePool perIterationInput = decodedInput.input();
 			final long batchSize = computeBatchSize(iterationsLeft, perIterationInput, remainingAvailable);
-			LOGGER.info(
-				"[LP] RecipeDesanitizer.decodeSanitizedStep batch: recipeId={} iterationsLeft={} perIterationInput={} batchSize={} remainingAvailableBefore={}",
-				recipe.recipeId(),
-				iterationsLeft,
-				summarizePool(perIterationInput),
-				batchSize,
-				summarizePool(remainingAvailable)
-			);
+			// LOGGER.info(
+			// 	"[LP] RecipeDesanitizer.decodeSanitizedStep batch: recipeId={} iterationsLeft={} perIterationInput={} batchSize={} remainingAvailableBefore={}",
+			// 	recipe.recipeId(),
+			// 	iterationsLeft,
+			// 	summarizePool(perIterationInput),
+			// 	batchSize,
+			// 	summarizePool(remainingAvailable)
+			// );
 			if (batchSize <= 0L) {
-				LOGGER.info(
-					"[LP] RecipeDesanitizer.decodeSanitizedStep stopping decode: recipeId={} batchSize={} iterationsLeft={} (insufficient concrete inputs)",
-					recipe.recipeId(),
-					batchSize,
-					iterationsLeft
-				);
+				// LOGGER.info(
+				// 	"[LP] RecipeDesanitizer.decodeSanitizedStep stopping decode: recipeId={} batchSize={} iterationsLeft={} (insufficient concrete inputs)",
+				// 	recipe.recipeId(),
+				// 	batchSize,
+				// 	iterationsLeft
+				// );
 				break;
 			}
 
@@ -207,40 +390,57 @@ public final class RecipeDesanitizer {
 			);
 			decoded.add(new RecipeApplicationStep(decodedRecipe, batchSize));
 			iterationsLeft -= batchSize;
-			LOGGER.info(
-				"[LP] RecipeDesanitizer.decodeSanitizedStep emitted decoded step: recipeId={} emittedIterations={} iterationsLeftAfter={} remainingAvailableAfter={}",
-				recipe.recipeId(),
-				batchSize,
-				iterationsLeft,
-				summarizePool(remainingAvailable)
-			);
+			// LOGGER.info(
+			// 	"[LP] RecipeDesanitizer.decodeSanitizedStep emitted decoded step: recipeId={} emittedIterations={} iterationsLeftAfter={} remainingAvailableAfter={}",
+			// 	recipe.recipeId(),
+			// 	batchSize,
+			// 	iterationsLeft,
+			// 	summarizePool(remainingAvailable)
+			// );
 		}
 	}
 
-	private static ResourcePool decodeSingleIterationInput(
+	private static DecodedIterationInput decodeSingleIterationInput(
 		final ResourcePool sanitizedInput,
 		final ResourcePool remainingAvailable
 	) {
 		final ResourcePool perIterationInput = ResourcePool.empty();
+		final ResourcePool unresolvedPerIterationInput = ResourcePool.empty();
 
-		for (final Map.Entry<ResourceKey, Long> input : sanitizedInput) {
-			final ResourceKey resource = input.getKey();
+		for (final Map.Entry<Object, Long> input : sanitizedInput) {
+			final Object resource = input.getKey();
 			final long perIteration = input.getValue();
 			if (perIteration <= 0L) {
 				continue;
 			}
 
 			if (resource instanceof MultiResourceKey multiResourceKey) {
-				final Map<ResourceKey, Long> allocation = multiResourceKey.allocateConcrete(perIteration, remainingAvailable);
+				final Map<ResourceKey, Long> allocation = allocateConcrete(
+					multiResourceKey,
+					perIteration,
+					remainingAvailable
+				);
+				final long allocatedTotal = sumMapValues(allocation);
 				for (final Map.Entry<ResourceKey, Long> allocated : allocation.entrySet()) {
 					perIterationInput.addAmount(allocated.getKey(), allocated.getValue());
 				}
-			} else {
-				perIterationInput.addAmount(resource, perIteration);
+				if (allocatedTotal < perIteration) {
+					final long unresolved = perIteration - allocatedTotal;
+					final ResourceKey fallbackResource = fallbackResourceFor(multiResourceKey);
+					perIterationInput.addAmount(fallbackResource, unresolved);
+					// LOGGER.info(
+					// 	"[LP] RecipeDesanitizer.decodeSingleIterationInput falling back unresolved multi-key amount to first option: multiKey={} fallbackResource={} unresolvedAmount={}",
+					// 	resource,
+					// 	fallbackResource,
+					// 	unresolved
+					// );
+				}
+			} else if (resource instanceof ResourceKey resourceKey) {
+				perIterationInput.addAmount(resourceKey, perIteration);
 			}
 		}
 
-		return perIterationInput;
+		return new DecodedIterationInput(perIterationInput, unresolvedPerIterationInput);
 	}
 
 	private static long computeBatchSize(
@@ -249,7 +449,7 @@ public final class RecipeDesanitizer {
 		final ResourcePool remainingAvailable
 	) {
 		long batchSize = iterationsLeft;
-		for (final Map.Entry<ResourceKey, Long> entry : perIterationInput) {
+		for (final Map.Entry<Object, Long> entry : perIterationInput) {
 			final long neededPerIteration = entry.getValue();
 			if (neededPerIteration <= 0L) {
 				continue;
@@ -265,7 +465,7 @@ public final class RecipeDesanitizer {
 		final ResourcePool perIterationInput,
 		final long batchSize
 	) {
-		for (final Map.Entry<ResourceKey, Long> entry : perIterationInput) {
+		for (final Map.Entry<Object, Long> entry : perIterationInput) {
 			final long toSubtract = entry.getValue() * batchSize;
 			if (toSubtract > 0L) {
 				remainingAvailable.subtractAmount(entry.getKey(), toSubtract);
@@ -274,12 +474,45 @@ public final class RecipeDesanitizer {
 	}
 
 	private static boolean containsMultiResourceKey(final ResourcePool input) {
-		for (final Map.Entry<ResourceKey, Long> entry : input) {
+		for (final Map.Entry<Object, Long> entry : input) {
 			if (entry.getKey() instanceof MultiResourceKey) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	private static Map<ResourceKey, Long> allocateConcrete(
+		final MultiResourceKey multiResourceKey,
+		final long totalNeeded,
+		final ResourcePool available
+	) {
+		final Map<ResourceKey, Long> allocation = new LinkedHashMap<>();
+		long remaining = totalNeeded;
+		for (final ResourceKey member : multiResourceKey.members()) {
+			if (remaining <= 0) {
+				break;
+			}
+			final long memberAvailable = Math.max(0L, available.getAmount(member));
+			final long use = Math.min(remaining, memberAvailable);
+			if (use > 0) {
+				allocation.put(member, use);
+				remaining -= use;
+			}
+		}
+		return allocation;
+	}
+
+	private static List<ResourceKey> decodeRelevantResourceKeys(final List<Object> relevantResourceKeys) {
+		final LinkedHashSet<ResourceKey> decoded = new LinkedHashSet<>();
+		for (final Object key : relevantResourceKeys) {
+			if (key instanceof MultiResourceKey multiResourceKey) {
+				decoded.addAll(multiResourceKey.members());
+			} else if (key instanceof ResourceKey resourceKey) {
+				decoded.add(resourceKey);
+			}
+		}
+		return List.copyOf(decoded);
 	}
 
 	private static void throwIfCancelled(final CancellationToken cancellationToken) {
@@ -294,7 +527,7 @@ public final class RecipeDesanitizer {
 
 	private static int countPoolEntries(final ResourcePool pool) {
 		int count = 0;
-		for (final Map.Entry<ResourceKey, Long> ignored : pool) {
+		for (final Map.Entry<Object, Long> ignored : pool) {
 			count++;
 		}
 		return count;
@@ -302,7 +535,7 @@ public final class RecipeDesanitizer {
 
 	private static long sumPoolValues(final ResourcePool pool) {
 		long total = 0L;
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<Object, Long> entry : pool) {
 			total += entry.getValue();
 		}
 		return total;
@@ -314,5 +547,19 @@ public final class RecipeDesanitizer {
 			total += value;
 		}
 		return total;
+	}
+
+	private static ResourceKey fallbackResourceFor(final MultiResourceKey multiResourceKey) {
+		if (!multiResourceKey.members().isEmpty()) {
+			return multiResourceKey.members().getFirst();
+		}
+		throw new IllegalStateException("MultiResourceKey has no members");
+	}
+
+	private record DecodedIterationInput(ResourcePool input, ResourcePool unresolvedInput) {
+		private DecodedIterationInput {
+			input = input.copy();
+			unresolvedInput = unresolvedInput.copy();
+		}
 	}
 }

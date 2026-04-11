@@ -288,7 +288,7 @@ public final class ExecutionPlanner {
 		final CancellationToken cancellationToken
 	) {
 		long maxBatch = Long.MAX_VALUE;
-		for (final Map.Entry<ResourceKey, Long> entry : recipe.input()) {
+		for (final Map.Entry<Object, Long> entry : recipe.input()) {
 			throwIfCancelled(cancellationToken);
 			final long inputCount = entry.getValue();
 			if (inputCount <= 0) {
@@ -301,19 +301,19 @@ public final class ExecutionPlanner {
 	}
 
 	private static void applyRecipeBatch(final ConcreteRecipe recipe, final long batch, final ResourcePool inventory) {
-		for (final Map.Entry<ResourceKey, Long> entry : recipe.input()) {
+		for (final Map.Entry<Object, Long> entry : recipe.input()) {
 			inventory.subtractAmount(entry.getKey(), entry.getValue() * batch);
 		}
-		for (final Map.Entry<ResourceKey, Long> entry : recipe.output()) {
+		for (final Map.Entry<Object, Long> entry : recipe.output()) {
 			inventory.addAmount(entry.getKey(), entry.getValue() * batch);
 		}
 	}
 
 	private static void rollbackRecipeBatch(final ConcreteRecipe recipe, final long batch, final ResourcePool inventory) {
-		for (final Map.Entry<ResourceKey, Long> entry : recipe.output()) {
+		for (final Map.Entry<Object, Long> entry : recipe.output()) {
 			inventory.subtractAmount(entry.getKey(), entry.getValue() * batch);
 		}
-		for (final Map.Entry<ResourceKey, Long> entry : recipe.input()) {
+		for (final Map.Entry<Object, Long> entry : recipe.input()) {
 			inventory.addAmount(entry.getKey(), entry.getValue() * batch);
 		}
 	}

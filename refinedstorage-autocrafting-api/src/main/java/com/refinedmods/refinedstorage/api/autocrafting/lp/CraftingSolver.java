@@ -4,6 +4,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationT
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.ArrayDeque;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -62,7 +63,7 @@ public final class CraftingSolver {
 					computeRequiredBaseItemsAndSolution(recipes, startingResources, target);
 				LOGGER.info(
 					"[LP] solve: target requires base items (resourceCount={}, totalAmount={})",
-					countResources(deficitAnalysis.requiredBaseItems()),
+					deficitAnalysis.requiredBaseItems(),
 					totalAmount(deficitAnalysis.requiredBaseItems())
 				);
 				throwIfCancelled();
@@ -89,9 +90,8 @@ public final class CraftingSolver {
 			final DeficitAnalysisResult deficitAnalysis =
 				computeRequiredBaseItemsAndSolution(reducedRecipes, startingResources, target);
 			LOGGER.info(
-				"[LP] solve: fallback deficit analysis requires base items (resourceCount={}, totalAmount={})",
-				countResources(deficitAnalysis.requiredBaseItems()),
-				totalAmount(deficitAnalysis.requiredBaseItems())
+				"[LP] solve: fallback deficit analysis requires base items {}",
+				deficitAnalysis.requiredBaseItems()
 			);
 			throwIfCancelled();
 			return buildRecipeApplicationPath(reducedRecipes, startingResources, deficitAnalysis);
@@ -112,10 +112,9 @@ public final class CraftingSolver {
 			final ResourcePool required = computeRequiredBaseItemsAndSolution(recipes, startingResources, target)
 				.requiredBaseItems();
 			LOGGER.info(
-				"[LP] computeRequiredBaseItems: target={} requiredResourceCount={} totalRequiredAmount={}",
+				"[LP] computeRequiredBaseItems: target={} required={}",
 				target,
-				countResources(required),
-				totalAmount(required)
+				required
 			);
 			return required;
 		} catch (final CancellationException e) {
@@ -150,9 +149,9 @@ public final class CraftingSolver {
 		}
 
 		final Set<ResourceKey> relevantResources = new LinkedHashSet<>(
-			RecipeAnalyzer.collectRelevantResourceKeys(recipes)
+			toConcreteResourceKeys(RecipeAnalyzer.collectRelevantResourceKeys(recipes))
 		);
-		relevantResources.addAll(target.resourceKeys());
+		relevantResources.addAll(toConcreteResourceKeys(target.resourceKeys()));
 
 		return new LinearSolver(
 			recipes,
@@ -176,8 +175,10 @@ public final class CraftingSolver {
 
 		final List<ConcreteRecipe> selectedRecipes =
 			RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(recipes);
-		final Set<ResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(selectedRecipes);
-		relevantResources.addAll(target.resourceKeys());
+		final Set<ResourceKey> relevantResources = toConcreteResourceKeys(
+			RecipeAnalyzer.collectRelevantResourceKeys(selectedRecipes)
+		);
+		relevantResources.addAll(toConcreteResourceKeys(target.resourceKeys()));
 
 		final Set<ResourceKey> deficitResources = new LinkedHashSet<>(
 			RecipeAnalyzer.collectLeafResources(selectedRecipes)
@@ -252,9 +253,9 @@ public final class CraftingSolver {
 			computeUsedResources(valuesByRecipe),
 			solution.finalInventoryValues(),
 			deficitAnalysis.requiredBaseItems(),
-			RecipeAnalyzer.collectRelevantResourceKeys(recipes).stream()
+			new java.util.ArrayList<>(RecipeAnalyzer.collectRelevantResourceKeys(recipes).stream()
 				.sorted(Comparator.comparing(Object::toString))
-				.toList()
+				.toList())
 		);
 
 		return ExecutionPlanner.buildRecipeApplicationPathFromApplicationSet(
@@ -326,9 +327,9 @@ public final class CraftingSolver {
 	) {
 		throwIfCancelled();
 		final Set<ResourceKey> relevantResources = new LinkedHashSet<>(
-			RecipeAnalyzer.collectRelevantResourceKeys(recipes)
+			toConcreteResourceKeys(RecipeAnalyzer.collectRelevantResourceKeys(recipes))
 		);
-		relevantResources.addAll(target.resourceKeys());
+		relevantResources.addAll(toConcreteResourceKeys(target.resourceKeys()));
 
 		final LinearSolver.Result result = new LinearSolver(
 			recipes,
@@ -348,8 +349,10 @@ public final class CraftingSolver {
 		for (final Map.Entry<ConcreteRecipe, Long> entry : recipeValues.entrySet()) {
 			final ConcreteRecipe recipe = entry.getKey();
 			final long times = entry.getValue();
-			for (final Map.Entry<ResourceKey, Long> input : recipe.input()) {
-				used.addAmount(input.getKey(), input.getValue() * times);
+			for (final Map.Entry<Object, Long> input : recipe.input()) {
+				if (input.getKey() instanceof ResourceKey resourceKey) {
+					used.addAmount(resourceKey, input.getValue() * times);
+				}
 			}
 		}
 		return used;
@@ -357,7 +360,7 @@ public final class CraftingSolver {
 
 	private static int countResources(final ResourcePool pool) {
 		int count = 0;
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<Object, Long> entry : pool) {
 			if (entry.getValue() > 0L) {
 				count++;
 			}
@@ -367,12 +370,24 @@ public final class CraftingSolver {
 
 	private static long totalAmount(final ResourcePool pool) {
 		long total = 0L;
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<Object, Long> entry : pool) {
 			if (entry.getValue() > 0L) {
 				total += entry.getValue();
 			}
 		}
 		return total;
+	}
+
+	private static Set<ResourceKey> toConcreteResourceKeys(final Collection<Object> resources) {
+		final Set<ResourceKey> result = new LinkedHashSet<>();
+		for (final Object resource : resources) {
+			if (resource instanceof ResourceKey resourceKey) {
+				result.add(resourceKey);
+			} else if (resource instanceof MultiResourceKey multiResourceKey) {
+				result.addAll(multiResourceKey.members());
+			}
+		}
+		return result;
 	}
 
 	private static void validateInputs(

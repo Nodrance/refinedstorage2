@@ -4,18 +4,18 @@ import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * A virtual resource representing a set of interchangeable {@link ResourceKey}s.
  * Used in fuzzy recipe expansion where multiple items can satisfy the same ingredient slot.
- * Implements {@link ResourceKey} so it can be used transparently in {@link ResourcePool} and the LP solver.
+ * Used as an LP-only key after recipe sanitization.
  * Equivalent to old_lp's LpResourceSubset.
  */
-public final class MultiResourceKey implements ResourceKey {
+public final class MultiResourceKey {
     private final List<ResourceKey> members;
 
     public MultiResourceKey(final Collection<ResourceKey> members) {
@@ -38,34 +38,14 @@ public final class MultiResourceKey implements ResourceKey {
 
     /**
      * Returns the total amount available in storage across all members.
+     * @param storage map of Object -> amount (from ResourcePool internals)
      */
-    public long availableAmount(final ResourcePool storage) {
+    public long availableAmount(final Map<Object, Long> storage) {
         long total = 0;
         for (final ResourceKey member : members) {
-            total += Math.max(0L, storage.getAmount(member));
+            total += Math.max(0L, storage.getOrDefault(member, 0L));
         }
         return total;
-    }
-
-    /**
-     * Allocates concrete amounts from the subset's members using available storage.
-     * Greedily uses members in order, consuming as much as possible from each.
-     */
-    public Map<ResourceKey, Long> allocateConcrete(final long totalNeeded, final ResourcePool available) {
-        final Map<ResourceKey, Long> allocation = new LinkedHashMap<>();
-        long remaining = totalNeeded;
-        for (final ResourceKey member : members) {
-            if (remaining <= 0) {
-                break;
-            }
-            final long memberAvailable = Math.max(0L, available.getAmount(member));
-            final long use = Math.min(remaining, memberAvailable);
-            if (use > 0) {
-                allocation.put(member, use);
-                remaining -= use;
-            }
-        }
-        return allocation;
     }
 
     @Override
@@ -80,6 +60,26 @@ public final class MultiResourceKey implements ResourceKey {
 
     @Override
     public String toString() {
-        return "MultiResourceKey" + members;
+        return "MRK[" + members.stream().map(m -> {
+            // Try to extract a concise name for ItemResource, else fallback to toString
+            if (m.getClass().getSimpleName().equals("ItemResource")) {
+                try {
+                    java.lang.reflect.Field itemField = m.getClass().getDeclaredField("item");
+                    itemField.setAccessible(true);
+                    Object item = itemField.get(m);
+                    // Use the registry name if possible
+                    java.lang.reflect.Method getDescriptionId = item.getClass().getMethod("getDescriptionId");
+                    String descId = (String) getDescriptionId.invoke(item);
+                    // descId is like "item.minecraft.oak_planks", take the last part
+                    String[] parts = descId.split("\\.");
+                    return parts[parts.length - 1];
+                } catch (Exception e) {
+                    // fallback
+                    return m.toString();
+                }
+            } else {
+                return m.toString();
+            }
+        }).collect(Collectors.joining(", ")) + "]";
     }
 }
