@@ -110,6 +110,9 @@ public final class ItemResource
 
     @Override
     public String toString() {
+        if (components.isEmpty()) {
+            return "ItemResource[item=" + item + "]";
+        }
         return "ItemResource["
                 + "item=" + item + ", "
                 + "components=" + components + ']';
