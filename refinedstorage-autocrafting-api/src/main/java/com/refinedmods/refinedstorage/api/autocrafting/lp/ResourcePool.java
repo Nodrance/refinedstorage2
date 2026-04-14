@@ -1,9 +1,5 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
-import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
-import com.refinedmods.refinedstorage.api.resource.ResourceKey;
-
-import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -16,14 +12,14 @@ import java.util.Set;
  * Zero amounts are not stored.
  * Equivalent to old_lp's LpResourceSet.
  */
-public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
-    private final Map<ResourceKey, Long> amounts;
+public class ResourcePool implements Iterable<Map.Entry<MultiResourceKey, Long>> {
+    private final Map<MultiResourceKey, Long> amounts;
 
     public ResourcePool() {
         this.amounts = new LinkedHashMap<>();
     }
 
-    public ResourcePool(final Map<ResourceKey, Long> amounts) {
+    public ResourcePool(final Map<MultiResourceKey, Long> amounts) {
         this();
         Objects.requireNonNull(amounts, "amounts cannot be null");
         amounts.forEach(this::setAmount);
@@ -38,24 +34,15 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         return new ResourcePool(other.amounts);
     }
 
-    public static ResourcePool fromResourceAmounts(final Collection<ResourceAmount> resourceAmounts) {
-        Objects.requireNonNull(resourceAmounts, "resourceAmounts cannot be null");
-        final ResourcePool result = new ResourcePool();
-        for (final ResourceAmount resourceAmount : resourceAmounts) {
-            result.addAmount(resourceAmount.resource(), resourceAmount.amount());
-        }
-        return result;
-    }
-
-    public Map<ResourceKey, Long> asMap() {
+    public Map<MultiResourceKey, Long> asMap() {
         return Collections.unmodifiableMap(amounts);
     }
 
-    public Set<ResourceKey> resourceKeys() {
+    public Set<MultiResourceKey> resourceKeys() {
         return Collections.unmodifiableSet(amounts.keySet());
     }
 
-    public long getAmount(final ResourceKey resource) {
+    public long getAmount(final MultiResourceKey resource) {
         Objects.requireNonNull(resource, "resource cannot be null");
         return amounts.getOrDefault(resource, 0L);
     }
@@ -72,7 +59,7 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         return amounts.isEmpty();
     }
 
-    public void setAmount(final ResourceKey resource, final long amount) {
+    public void setAmount(final MultiResourceKey resource, final long amount) {
         Objects.requireNonNull(resource, "resource cannot be null");
         if (amount == 0L) {
             amounts.remove(resource);
@@ -81,7 +68,7 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         amounts.put(resource, amount);
     }
 
-    public void addAmount(final ResourceKey resource, final long amount) {
+    public void addAmount(final MultiResourceKey resource, final long amount) {
         Objects.requireNonNull(resource, "resource cannot be null");
         if (amount == 0L) {
             return;
@@ -99,12 +86,12 @@ public class ResourcePool implements Iterable<Map.Entry<ResourceKey, Long>> {
         other.amounts.forEach(this::subtractAmount);
     }
 
-    public void subtractAmount(final ResourceKey resource, final long amount) {
+    public void subtractAmount(final MultiResourceKey resource, final long amount) {
         addAmount(resource, -amount);
     }
 
     @Override
-    public java.util.Iterator<Map.Entry<ResourceKey, Long>> iterator() {
+    public java.util.Iterator<Map.Entry<MultiResourceKey, Long>> iterator() {
         return amounts.entrySet().iterator();
     }
 

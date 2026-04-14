@@ -4,19 +4,17 @@ import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
  * A virtual resource representing a set of interchangeable {@link ResourceKey}s.
  * Used in fuzzy recipe expansion where multiple items can satisfy the same ingredient slot.
- * Implements {@link ResourceKey} so it can be used transparently in {@link ResourcePool} and the LP solver.
+ * This key is internal to LP solving and intentionally separate from {@link ResourceKey}.
  * Equivalent to old_lp's LpResourceSubset.
  */
-public final class MultiResourceKey implements ResourceKey {
+public final class MultiResourceKey {
     private final List<ResourceKey> members;
 
     public MultiResourceKey(final Collection<ResourceKey> members) {
@@ -35,38 +33,6 @@ public final class MultiResourceKey implements ResourceKey {
 
     public boolean contains(final ResourceKey resource) {
         return members.contains(resource);
-    }
-
-    /**
-     * Returns the total amount available in storage across all members.
-     */
-    public long availableAmount(final ResourcePool storage) {
-        long total = 0;
-        for (final ResourceKey member : members) {
-            total += Math.max(0L, storage.getAmount(member));
-        }
-        return total;
-    }
-
-    /**
-     * Allocates concrete amounts from the subset's members using available storage.
-     * Greedily uses members in order, consuming as much as possible from each.
-     */
-    public Map<ResourceKey, Long> allocateConcrete(final long totalNeeded, final ResourcePool available) {
-        final Map<ResourceKey, Long> allocation = new LinkedHashMap<>();
-        long remaining = totalNeeded;
-        for (final ResourceKey member : members) {
-            if (remaining <= 0) {
-                break;
-            }
-            final long memberAvailable = Math.max(0L, available.getAmount(member));
-            final long use = Math.min(remaining, memberAvailable);
-            if (use > 0) {
-                allocation.put(member, use);
-                remaining -= use;
-            }
-        }
-        return allocation;
     }
 
     @Override

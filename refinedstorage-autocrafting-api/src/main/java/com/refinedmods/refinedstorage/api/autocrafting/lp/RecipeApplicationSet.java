@@ -1,7 +1,5 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
-import com.refinedmods.refinedstorage.api.resource.ResourceKey;
-
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -18,7 +16,7 @@ public record RecipeApplicationSet(
     ResourcePool usedResources,
     ResourcePool finalInventoryValues,
     ResourcePool missingResources,
-    List<ResourceKey> relevantResourceKeys
+    List<MultiResourceKey> relevantResourceKeys
 ) {
     public RecipeApplicationSet {
         Objects.requireNonNull(recipes, "recipes cannot be null");

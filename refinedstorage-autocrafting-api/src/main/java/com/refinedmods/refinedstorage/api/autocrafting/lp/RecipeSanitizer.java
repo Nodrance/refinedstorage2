@@ -3,7 +3,6 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.ResourcePool;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
@@ -159,7 +158,7 @@ public class RecipeSanitizer {
         Objects.requireNonNull(patterns, "patterns cannot be null");
         Objects.requireNonNull(multiResourceKeys, "multiResourceKeys cannot be null");
         Objects.requireNonNull(patternPriorities, "patternPriorities cannot be null");
-        final Map<ResourceKey, ResourceKey> resourceToKey = buildResourceToKeyMap(multiResourceKeys);
+        final Map<ResourceKey, MultiResourceKey> resourceToKey = buildResourceToKeyMap(multiResourceKeys);
         return toConcreteRecipes(patterns, resourceToKey, patternPriorities);
     }
 
@@ -172,7 +171,7 @@ public class RecipeSanitizer {
         Objects.requireNonNull(multiResourceKeyIndex, "multiResourceKeyIndex cannot be null");
         Objects.requireNonNull(patternPriorities, "patternPriorities cannot be null");
 
-        final Map<ResourceKey, ResourceKey> resourceToKey = new LinkedHashMap<>();
+        final Map<ResourceKey, MultiResourceKey> resourceToKey = new LinkedHashMap<>();
         for (final Map.Entry<ResourceKey, MultiResourceKey> entry : multiResourceKeyIndex.mrkByMember().entrySet()) {
             resourceToKey.put(entry.getKey(), entry.getValue());
         }
@@ -181,7 +180,7 @@ public class RecipeSanitizer {
 
     private static List<ConcreteRecipe> toConcreteRecipes(
         final List<Pattern> patterns,
-        final Map<ResourceKey, ResourceKey> resourceToKey,
+        final Map<ResourceKey, MultiResourceKey> resourceToKey,
         final Map<UUID, Integer> patternPriorities
     ) {
         final List<ConcreteRecipe> result = new ArrayList<>();
@@ -280,10 +279,10 @@ public class RecipeSanitizer {
         ));
     }
 
-    private static Map<ResourceKey, ResourceKey> buildResourceToKeyMap(
+    private static Map<ResourceKey, MultiResourceKey> buildResourceToKeyMap(
         final List<MultiResourceKey> multiResourceKeys
     ) {
-        final Map<ResourceKey, ResourceKey> map = new LinkedHashMap<>();
+        final Map<ResourceKey, MultiResourceKey> map = new LinkedHashMap<>();
         for (final MultiResourceKey mrk : multiResourceKeys) {
             for (final ResourceKey member : mrk.members()) {
                 map.put(member, mrk);
@@ -318,7 +317,7 @@ public class RecipeSanitizer {
 
     private static void expandPattern(
         final Pattern pattern,
-        final Map<ResourceKey, ResourceKey> resourceToKey,
+        final Map<ResourceKey, MultiResourceKey> resourceToKey,
         final Map<UUID, Integer> patternPriorities,
         final List<ConcreteRecipe> result
     ) {
@@ -327,28 +326,32 @@ public class RecipeSanitizer {
         // Non-fuzzy inputs (single-option ingredients) pass through as-is.
         // Fuzzy inputs are grouped by their representative-key list so that
         // ingredients with identical option sets have their amounts summed.
-        final Map<ResourceKey, Long> nonFuzzyInputs = new LinkedHashMap<>();
-        final Map<List<ResourceKey>, Long> fuzzyGroups = new LinkedHashMap<>();
+        final Map<MultiResourceKey, Long> nonFuzzyInputs = new LinkedHashMap<>();
+        final Map<List<MultiResourceKey>, Long> fuzzyGroups = new LinkedHashMap<>();
 
         for (final Ingredient ingredient : pattern.layout().ingredients()) {
             if (ingredient.inputs().size() == 1) {
-                nonFuzzyInputs.merge(ingredient.inputs().getFirst(), ingredient.amount(), Long::sum);
+                final MultiResourceKey mapped = resourceToKey.get(ingredient.inputs().getFirst());
+                if (mapped == null) {
+                    throw new IllegalStateException("No MultiResourceKey mapping found for ingredient input " + ingredient.inputs().getFirst());
+                }
+                nonFuzzyInputs.merge(mapped, ingredient.amount(), Long::sum);
             } else {
-                final List<ResourceKey> repKeys = mapToRepresentativeKeys(ingredient.inputs(), resourceToKey);
+                final List<MultiResourceKey> repKeys = mapToRepresentativeKeys(ingredient.inputs(), resourceToKey);
                 fuzzyGroups.merge(repKeys, ingredient.amount(), Long::sum);
             }
         }
 
         // Cross-product of stars-and-bars allocations across all fuzzy groups
-        List<Map<ResourceKey, Long>> variants = new ArrayList<>();
+        List<Map<MultiResourceKey, Long>> variants = new ArrayList<>();
         variants.add(new LinkedHashMap<>());
-        for (final Map.Entry<List<ResourceKey>, Long> entry : fuzzyGroups.entrySet()) {
-            final List<Map<ResourceKey, Long>> groupAllocations =
+        for (final Map.Entry<List<MultiResourceKey>, Long> entry : fuzzyGroups.entrySet()) {
+            final List<Map<MultiResourceKey, Long>> groupAllocations =
                 generateAllocations(entry.getKey(), entry.getValue());
-            final List<Map<ResourceKey, Long>> newVariants = new ArrayList<>();
-            for (final Map<ResourceKey, Long> existing : variants) {
-                for (final Map<ResourceKey, Long> allocation : groupAllocations) {
-                    final Map<ResourceKey, Long> combined = new LinkedHashMap<>(existing);
+            final List<Map<MultiResourceKey, Long>> newVariants = new ArrayList<>();
+            for (final Map<MultiResourceKey, Long> existing : variants) {
+                for (final Map<MultiResourceKey, Long> allocation : groupAllocations) {
+                    final Map<MultiResourceKey, Long> combined = new LinkedHashMap<>(existing);
                     allocation.forEach((k, v) -> combined.merge(k, v, Long::sum));
                     newVariants.add(combined);
                 }
@@ -357,12 +360,12 @@ public class RecipeSanitizer {
         }
 
         // Merge non-fuzzy inputs into every variant
-        for (final Map<ResourceKey, Long> variant : variants) {
+        for (final Map<MultiResourceKey, Long> variant : variants) {
             nonFuzzyInputs.forEach((k, v) -> variant.merge(k, v, Long::sum));
         }
 
         final boolean hasFuzzy = !fuzzyGroups.isEmpty();
-        for (final Map<ResourceKey, Long> variantInput : variants) {
+        for (final Map<MultiResourceKey, Long> variantInput : variants) {
             final ResourcePool input = new ResourcePool(variantInput);
             final UUID recipeId = hasFuzzy
                 ? deterministicVariantRecipeId(pattern.id(), input)
@@ -384,14 +387,17 @@ public class RecipeSanitizer {
         return UUID.nameUUIDFromBytes(builder.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static List<ResourceKey> mapToRepresentativeKeys(
+    private static List<MultiResourceKey> mapToRepresentativeKeys(
         final List<ResourceKey> inputs,
-        final Map<ResourceKey, ResourceKey> resourceToKey
+        final Map<ResourceKey, MultiResourceKey> resourceToKey
     ) {
-        final List<ResourceKey> repKeys = new ArrayList<>();
-        final Set<ResourceKey> seen = new LinkedHashSet<>();
+        final List<MultiResourceKey> repKeys = new ArrayList<>();
+        final Set<MultiResourceKey> seen = new LinkedHashSet<>();
         for (final ResourceKey input : inputs) {
-            final ResourceKey rep = resourceToKey.getOrDefault(input, input);
+            final MultiResourceKey rep = resourceToKey.get(input);
+            if (rep == null) {
+                throw new IllegalStateException("No MultiResourceKey mapping found for ingredient input " + input);
+            }
             if (seen.add(rep)) {
                 repKeys.add(rep);
             }
@@ -399,8 +405,8 @@ public class RecipeSanitizer {
         return repKeys;
     }
 
-    private static List<Map<ResourceKey, Long>> generateAllocations(
-        final List<ResourceKey> keys,
+    private static List<Map<MultiResourceKey, Long>> generateAllocations(
+        final List<MultiResourceKey> keys,
         final long totalAmount
     ) {
         if (keys.isEmpty()) {
@@ -409,17 +415,17 @@ public class RecipeSanitizer {
         if (keys.size() == 1) {
             return List.of(Map.of(keys.getFirst(), totalAmount));
         }
-        final List<Map<ResourceKey, Long>> allocations = new ArrayList<>();
+        final List<Map<MultiResourceKey, Long>> allocations = new ArrayList<>();
         generateAllocationsRecursive(keys, 0, totalAmount, new LinkedHashMap<>(), allocations);
         return allocations;
     }
 
     private static void generateAllocationsRecursive(
-        final List<ResourceKey> keys,
+        final List<MultiResourceKey> keys,
         final int index,
         final long remaining,
-        final Map<ResourceKey, Long> current,
-        final List<Map<ResourceKey, Long>> results
+        final Map<MultiResourceKey, Long> current,
+        final List<Map<MultiResourceKey, Long>> results
     ) {
         if (index == keys.size() - 1) {
             if (remaining > 0) {
@@ -441,10 +447,10 @@ public class RecipeSanitizer {
     private static ResourcePool buildOutputPool(final Pattern pattern) {
         final ResourcePool pool = new ResourcePool();
         for (final ResourceAmount ra : pattern.layout().outputs()) {
-            pool.addAmount(ra.resource(), ra.amount());
+            pool.addAmount(new MultiResourceKey(List.of(ra.resource())), ra.amount());
         }
         for (final ResourceAmount ra : pattern.layout().byproducts()) {
-            pool.addAmount(ra.resource(), ra.amount());
+            pool.addAmount(new MultiResourceKey(List.of(ra.resource())), ra.amount());
         }
         return pool;
     }

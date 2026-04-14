@@ -1,7 +1,6 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -29,20 +28,20 @@ public final class LinearSolver {
 
 	private final List<ConcreteRecipe> recipes;
 	private final List<ConcreteRecipe> reversePriorityRecipes;
-	private final Set<ResourceKey> relevantResources;
+	private final Set<MultiResourceKey> relevantResources;
 	private final ResourcePool startingResources;
 	private final ResourcePool target;
-	private final Set<ResourceKey> unconstrainedResources;
+	private final Set<MultiResourceKey> unconstrainedResources;
 	private final Set<UUID> disabledRecipeIds;
 	private final Options options;
 	private final CancellationToken cancellationToken;
 
 	public LinearSolver(
 		final List<ConcreteRecipe> recipes,
-		final Set<ResourceKey> relevantResources,
+		final Set<MultiResourceKey> relevantResources,
 		final ResourcePool startingResources,
 		final ResourcePool target,
-		final Set<ResourceKey> unconstrainedResources,
+		final Set<MultiResourceKey> unconstrainedResources,
 		final Set<UUID> disabledRecipeIds,
 		final Options options,
 		final CancellationToken cancellationToken
@@ -101,7 +100,7 @@ public final class LinearSolver {
 		return feasible;
 	}
 
-	public Result maximize(final ResourceKey objectiveResource) {
+	public Result maximize(final MultiResourceKey objectiveResource) {
 		throwIfCancelled();
 		final Result result = solveWithObjective(
 			Objects.requireNonNull(objectiveResource, "objectiveResource cannot be null"),
@@ -120,7 +119,7 @@ public final class LinearSolver {
 	}
 
 	private Result solveWithObjective(
-		final ResourceKey objectiveResource,
+		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId,
 		final boolean maximize,
 		final Map<UUID, Long> lockedRecipeValues
@@ -157,7 +156,7 @@ public final class LinearSolver {
 	}
 
 	private Result solveWithObjectiveInternal(
-		final ResourceKey objectiveResource,
+		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId,
 		final boolean maximize,
 		final Map<UUID, Long> lockedRecipeValues
@@ -215,7 +214,7 @@ public final class LinearSolver {
 		final Thread workerThread,
 		final String description,
 		final boolean logObjectiveDetails,
-		final ResourceKey objectiveResource,
+		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId,
 		final boolean maximize,
 		final Map<UUID, Long> lockedRecipeValues
@@ -261,7 +260,7 @@ public final class LinearSolver {
 		final Thread workerThread,
 		final String description,
 		final boolean logObjectiveDetails,
-		final ResourceKey objectiveResource,
+		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId,
 		final boolean maximize,
 		final Map<UUID, Long> lockedRecipeValues
@@ -306,7 +305,7 @@ public final class LinearSolver {
 	private void configureObjective(
 		final ExpressionsBasedModel model,
 		final Map<UUID, Variable> variableByRecipeId,
-		final ResourceKey objectiveResource,
+		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId
 	) {
 		throwIfCancelled();
@@ -326,7 +325,7 @@ public final class LinearSolver {
 
 	private long objectiveCoefficient(
 		final ConcreteRecipe recipe,
-		final ResourceKey objectiveResource,
+		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId
 	) {
 		if (objectiveRecipeId != null) {
@@ -339,7 +338,7 @@ public final class LinearSolver {
 		final ExpressionsBasedModel model,
 		final Map<UUID, Variable> variableByRecipeId
 	) {
-		for (final ResourceKey resource : relevantResources) {
+		for (final MultiResourceKey resource : relevantResources) {
 			throwIfCancelled();
 			if (unconstrainedResources.contains(resource)) {
 				continue;
@@ -385,7 +384,7 @@ public final class LinearSolver {
 
 	private ResourcePool computeFinalInventoryValues(final Map<UUID, Long> recipeValues) {
 		final ResourcePool finalInventoryValues = ResourcePool.empty();
-		for (final ResourceKey resource : relevantResources) {
+		for (final MultiResourceKey resource : relevantResources) {
 			throwIfCancelled();
 			long amount = startingResources.getAmount(resource);
 			for (final ConcreteRecipe recipe : recipes) {
@@ -396,18 +395,18 @@ public final class LinearSolver {
 				}
 				amount += recipeCoefficient(recipe, resource) * usage;
 			}
-			// LOGGER.info("[LP] computeFinalInventoryValues: resource={} startingAmount={} netRecipeChange={} finalAmount={}",
-			// 	resource,
-			// 	startingResources.getAmount(resource),
-			// 	amount - startingResources.getAmount(resource),
-			// 	amount
-			// );
+			LOGGER.info("[LP] computeFinalInventoryValues: resource={} startingAmount={} netRecipeChange={} finalAmount={}",
+				resource,
+				startingResources.getAmount(resource),
+				amount - startingResources.getAmount(resource),
+				amount
+			);
 			finalInventoryValues.setAmount(resource, amount);
 		}
 		return finalInventoryValues;
 	}
 
-	private static long recipeCoefficient(final ConcreteRecipe recipe, final ResourceKey resource) {
+	private static long recipeCoefficient(final ConcreteRecipe recipe, final MultiResourceKey resource) {
 		return recipe.output().getAmount(resource) - recipe.input().getAmount(resource);
 	}
 
@@ -421,7 +420,7 @@ public final class LinearSolver {
 
 	private static int countNonZeroResources(final ResourcePool finalInventoryValues) {
 		int count = 0;
-		for (final Map.Entry<ResourceKey, Long> entry : finalInventoryValues) {
+		for (final Map.Entry<MultiResourceKey, Long> entry : finalInventoryValues) {
 			if (entry.getValue() != 0L) {
 				count++;
 			}

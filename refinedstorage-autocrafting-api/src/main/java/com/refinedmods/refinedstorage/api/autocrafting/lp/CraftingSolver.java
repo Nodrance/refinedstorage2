@@ -1,7 +1,6 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -147,7 +146,7 @@ public final class CraftingSolver {
 			return true;
 		}
 
-		final Set<ResourceKey> relevantResources = new LinkedHashSet<>(
+		final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
 			RecipeAnalyzer.collectRelevantResourceKeys(recipes)
 		);
 		relevantResources.addAll(target.resourceKeys());
@@ -171,19 +170,21 @@ public final class CraftingSolver {
 	) {
 		validateInputs(recipes, startingResources, target);
 		throwIfCancelled();
+		LOGGER.info("[LP] computeRequiredBaseItemsAndSolution: analyzing deficit for target {}", target);
 
 		final List<ConcreteRecipe> selectedRecipes =
 			RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(recipes);
-		final Set<ResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(selectedRecipes);
+		final Set<MultiResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(selectedRecipes);
 		relevantResources.addAll(target.resourceKeys());
 
-		final Set<ResourceKey> deficitResources = new LinkedHashSet<>(
+		final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(
 			RecipeAnalyzer.collectLeafResources(selectedRecipes)
 		);
+		LOGGER.info("[LP] computeRequiredBaseItemsAndSolution: deficit resources={}", deficitResources);
 
 		if (selectedRecipes.isEmpty()) {
 			final ResourcePool required = new ResourcePool();
-			for (final ResourceKey resource : deficitResources) {
+			for (final MultiResourceKey resource : deficitResources) {
 				throwIfCancelled();
 				final long needed = Math.max(0L, target.getAmount(resource) - startingResources.getAmount(resource));
 				if (needed > 0) {
@@ -193,7 +194,7 @@ public final class CraftingSolver {
 			return new DeficitAnalysisResult(required, Optional.empty());
 		}
 
-		final Set<ResourceKey> unconstrainedResources = new LinkedHashSet<>(deficitResources);
+		final Set<MultiResourceKey> unconstrainedResources = new LinkedHashSet<>(deficitResources);
 
 		final LinearSolver.Result result = new LinearSolver(
 			selectedRecipes,
@@ -207,7 +208,7 @@ public final class CraftingSolver {
 		).lexicographicMinimum();
 
 		final ResourcePool required = new ResourcePool();
-		for (final ResourceKey resource : deficitResources) {
+		for (final MultiResourceKey resource : deficitResources) {
 			throwIfCancelled();
 			final long finalInventory = result == null
 				? startingResources.getAmount(resource)
@@ -323,7 +324,7 @@ public final class CraftingSolver {
 		final Set<UUID> disabledRecipeIds
 	) {
 		throwIfCancelled();
-		final Set<ResourceKey> relevantResources = new LinkedHashSet<>(
+		final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
 			RecipeAnalyzer.collectRelevantResourceKeys(recipes)
 		);
 		relevantResources.addAll(target.resourceKeys());
@@ -346,7 +347,7 @@ public final class CraftingSolver {
 		for (final Map.Entry<ConcreteRecipe, Long> entry : recipeValues.entrySet()) {
 			final ConcreteRecipe recipe = entry.getKey();
 			final long times = entry.getValue();
-			for (final Map.Entry<ResourceKey, Long> input : recipe.input()) {
+			for (final Map.Entry<MultiResourceKey, Long> input : recipe.input()) {
 				used.addAmount(input.getKey(), input.getValue() * times);
 			}
 		}
@@ -355,7 +356,7 @@ public final class CraftingSolver {
 
 	private static int countResources(final ResourcePool pool) {
 		int count = 0;
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<MultiResourceKey, Long> entry : pool) {
 			if (entry.getValue() > 0L) {
 				count++;
 			}
@@ -365,7 +366,7 @@ public final class CraftingSolver {
 
 	private static long totalAmount(final ResourcePool pool) {
 		long total = 0L;
-		for (final Map.Entry<ResourceKey, Long> entry : pool) {
+		for (final Map.Entry<MultiResourceKey, Long> entry : pool) {
 			if (entry.getValue() > 0L) {
 				total += entry.getValue();
 			}
