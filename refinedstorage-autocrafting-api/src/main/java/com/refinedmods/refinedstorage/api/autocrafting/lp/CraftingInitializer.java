@@ -161,7 +161,7 @@ public final class CraftingInitializer {
 			initialization.concreteRecipes(),
 			initialization.relevantStartingResources(),
 			initialization.target()
-		).map(path -> desanitizeRecipeApplicationPath(path, initialization.relevantStartingResources(), cancellationToken));
+		).map(path -> desanitizeRecipeApplicationPath(path, initialization.relevantStartingResources(), initialization.concreteStartingResources(), cancellationToken));
 	}
 
 	public static Optional<LpStepPlan> solveToStepPlan(
@@ -208,42 +208,150 @@ public final class CraftingInitializer {
 			return 0L;
 		}
 
-		long low = 1L;
-		long high = 1L;
-		while (high < amount && !cancellationToken.isCancelled()) {
-			if (solveToStepPlan(rootStorage, patternRepository, resource, high, cancellationToken).isPresent()) {
-				low = high;
-				high = high > Long.MAX_VALUE / 2 ? amount : Math.min(amount, high * 2);
-			} else {
-				break;
-			}
+		final long lpUpperBound = LpStepPlanCalculator.calculateMaxAmount(
+			patternRepository.getAll(),
+			LOGGER,
+			rootStorage,
+			resource,
+			amount,
+			cancellationToken
+		);
+		if (cancellationToken.isCancelled() || lpUpperBound <= 0L) {
+			return 0L;
 		}
 
+		final Initialization maxCalculationInitialization = initialize(
+			rootStorage,
+			patternRepository,
+			resource,
+			1L,
+			cancellationToken
+		);
+		final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
+
+		final long n = lpUpperBound;
+		final boolean nPlusOneCraftable = n < amount
+			&& n < Long.MAX_VALUE
+			&& canCraftWithoutMissingResources(maxCalculationInitialization, targetResource, n + 1L, cancellationToken);
+		if (cancellationToken.isCancelled()) {
+			return 0L;
+		}
+
+		final boolean nCraftable = canCraftWithoutMissingResources(
+			maxCalculationInitialization,
+			targetResource,
+			n,
+			cancellationToken
+		);
+		if (cancellationToken.isCancelled()) {
+			return 0L;
+		}
+
+		if (nPlusOneCraftable) {
+			long best = n + 1L;
+			if (best >= amount) {
+				return amount;
+			}
+
+			long high = best;
+			while (high < amount && !cancellationToken.isCancelled()) {
+				final long candidate = high > Long.MAX_VALUE / 2 ? amount : Math.min(amount, high * 2L);
+				if (candidate <= high) {
+					break;
+				}
+				if (canCraftWithoutMissingResources(maxCalculationInitialization, targetResource, candidate, cancellationToken)) {
+					best = candidate;
+					high = candidate;
+					if (best >= amount) {
+						return amount;
+					}
+				} else {
+					final long refined = binarySearchMaxCraftableAmount(
+						maxCalculationInitialization,
+						targetResource,
+						best + 1L,
+						candidate - 1L,
+						cancellationToken
+					);
+					return Math.max(best, refined);
+				}
+			}
+			return best;
+		}
+
+		if (nCraftable) {
+			return n;
+		}
+
+		if (n <= 1L) {
+			return 0L;
+		}
+
+		return binarySearchMaxCraftableAmount(
+			maxCalculationInitialization,
+			targetResource,
+			1L,
+			n - 1L,
+			cancellationToken
+		);
+	}
+
+	private static long binarySearchMaxCraftableAmount(
+		final Initialization initialization,
+		final MultiResourceKey targetResource,
+		final long low,
+		final long high,
+		final CancellationToken cancellationToken
+	) {
+		long left = low;
+		long right = high;
 		long best = 0L;
-		while (low <= high && !cancellationToken.isCancelled()) {
-			final long middle = low + ((high - low) / 2);
-			if (solveToStepPlan(rootStorage, patternRepository, resource, middle, cancellationToken).isPresent()) {
+		while (left <= right && !cancellationToken.isCancelled()) {
+			final long middle = left + ((right - left) / 2L);
+			if (canCraftWithoutMissingResources(initialization, targetResource, middle, cancellationToken)) {
 				best = middle;
-				low = middle + 1;
+				left = middle + 1L;
 			} else {
-				high = middle - 1;
+				right = middle - 1L;
 			}
 		}
-
 		return best;
 	}
 
-	public static <T> SolveAndPreviewResult<T> solveAndCalculatePreview(
+	private static boolean canCraftWithoutMissingResources(
+		final Initialization initialization,
+		final MultiResourceKey targetResource,
+		final long amount,
+		final CancellationToken cancellationToken
+	) {
+		if (cancellationToken.isCancelled()) {
+			return false;
+		}
+		final ResourcePool target = ResourcePool.empty();
+		target.setAmount(
+			targetResource,
+			initialization.relevantStartingResources().getAmount(targetResource) + amount
+		);
+		final Optional<RecipeApplicationPath> optionalPath = new CraftingSolver(cancellationToken).solve(
+			initialization.concreteRecipes(),
+			initialization.relevantStartingResources(),
+			target
+		);
+		if (optionalPath.isEmpty()) {
+			return false;
+		}
+
+		return optionalPath.get().applicationSet().missingResources().isEmpty();
+	}
+
+	public static SolveAndPreviewResult solveAndCalculatePreview(
 		final RootStorage rootStorage,
 		final PatternRepository patternRepository,
 		final ResourceKey resource,
 		final long amount,
-		final CancellationToken cancellationToken,
-		final PreviewCalculator<T> previewCalculator
+		final CancellationToken cancellationToken
 	) {
 	        LOGGER.info("[LPT] Entering solveAndCalculatePreview()");
-		Objects.requireNonNull(previewCalculator, "previewCalculator cannot be null");
-
 		final Initialization initialization = initialize(
 			rootStorage,
 			patternRepository,
@@ -261,9 +369,47 @@ public final class CraftingInitializer {
 		);
 		final Optional<RecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
 		LOGGER.info("[LP] Solve result for preview: {}", recipeApplicationPath);
-		final T previewResult = previewCalculator.calculate(initialization, recipeApplicationPath);
+		final Preview previewResult = recipeApplicationPath
+			.map(path -> PreviewCalculator.calculatePreview(path, cancellationToken))
+			.orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
 		LOGGER.info("[LP] Preview result: {}", previewResult);
-		return new SolveAndPreviewResult<>(initialization, recipeApplicationPath, previewResult);
+		return new SolveAndPreviewResult(initialization, recipeApplicationPath, previewResult);
+	}
+
+	public static SolveAndTreePreviewResult solveAndCalculateTreePreview(
+		final RootStorage rootStorage,
+		final PatternRepository patternRepository,
+		final ResourceKey resource,
+		final long amount,
+		final CancellationToken cancellationToken
+	) {
+	        LOGGER.info("[LPT] Entering solveAndCalculateTreePreview()");
+		final Initialization initialization = initialize(
+			rootStorage,
+			patternRepository,
+			resource,
+			amount,
+			cancellationToken
+		);
+		LOGGER.info("[LP] Initialization for solveAndCalculateTreePreview: {} concreteRecipes, {} relevantStartingResources, {} target, {} relevantResources, {} relevantPatterns, {} sanitizedPatterns",
+			initialization.concreteRecipes().size(),
+			initialization.relevantStartingResources(),
+			initialization.target(),
+			initialization.relevantResources().size(),
+			initialization.relevantPatterns().size(),
+			initialization.sanitizedPatterns().size()
+		);
+		final Optional<RecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
+		LOGGER.info("[LP] Solve result for tree preview: {}", recipeApplicationPath);
+		final TreePreview previewResult = calculateTreePreview(
+			resource,
+			amount,
+			rootStorage,
+			initialization,
+			recipeApplicationPath
+		);
+		LOGGER.info("[LP] Tree preview result: {}", previewResult);
+		return new SolveAndTreePreviewResult(initialization, recipeApplicationPath, previewResult);
 	}
 
 	public static TreePreview calculateTreePreview(
@@ -296,6 +442,7 @@ public final class CraftingInitializer {
 	private static RecipeApplicationPath desanitizeRecipeApplicationPath(
 		final RecipeApplicationPath path,
 		final ResourcePool availableResources,
+		final Map<ResourceKey, Long> concreteStartingResources,
 		final CancellationToken cancellationToken
 	) {
 	        LOGGER.info("[LPT] Entering desanitizeRecipeApplicationPath()");
@@ -306,9 +453,9 @@ public final class CraftingInitializer {
 		);
 
 		final RecipeApplicationSet original = path.applicationSet();
-		final ResourcePool decodedUsed = RecipeDesanitizer.decodeSanitizedResources(
+		final ResourcePool decodedUsed = RecipeDesanitizer.decodeSanitizedResourcePool(
 			original.usedResources(),
-			availableResources,
+			concreteStartingResources,
 			cancellationToken
 		);
 		final ResourcePool decodedMissing = RecipeDesanitizer.decodeSanitizedResources(
@@ -720,11 +867,6 @@ public final class CraftingInitializer {
 		}
 	}
 
-	@FunctionalInterface
-	public interface PreviewCalculator<T> {
-		T calculate(Initialization initialization, Optional<RecipeApplicationPath> recipeApplicationPath);
-	}
-
 	public record Initialization(
 		List<ConcreteRecipe> concreteRecipes,
 		ResourcePool relevantStartingResources,
@@ -752,14 +894,27 @@ public final class CraftingInitializer {
 		}
 	}
 
-	public record SolveAndPreviewResult<T>(
+	public record SolveAndPreviewResult(
 		Initialization initialization,
 		Optional<RecipeApplicationPath> recipeApplicationPath,
-		T previewResult
+		Preview previewResult
 	) {
 		public SolveAndPreviewResult {
 			Objects.requireNonNull(initialization, "initialization cannot be null");
 			Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
+			Objects.requireNonNull(previewResult, "previewResult cannot be null");
+		}
+	}
+
+	public record SolveAndTreePreviewResult(
+		Initialization initialization,
+		Optional<RecipeApplicationPath> recipeApplicationPath,
+		TreePreview previewResult
+	) {
+		public SolveAndTreePreviewResult {
+			Objects.requireNonNull(initialization, "initialization cannot be null");
+			Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
+			Objects.requireNonNull(previewResult, "previewResult cannot be null");
 		}
 	}
 }

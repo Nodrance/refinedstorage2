@@ -2,7 +2,6 @@ package com.refinedmods.refinedstorage.api.network.impl.autocrafting;
 
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.PreviewCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.TaskDispatcher;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
@@ -42,14 +41,12 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
                     return Optional.of(new Preview(PreviewType.CANCELLED, Collections.emptyList(), Collections.emptyList()));
                 }
                 final RootStorage rootStorage = state.getRootStorageProvider().get();
-                CraftingInitializer.SolveAndPreviewResult<Preview> result = CraftingInitializer.solveAndCalculatePreview(
+                CraftingInitializer.SolveAndPreviewResult result = CraftingInitializer.solveAndCalculatePreview(
                     rootStorage,
                     state.getPatternRepository(),
                     resource,
                     amount,
-                    cancellationToken,
-                    (init, path) -> path.map(p -> PreviewCalculator.calculatePreview(p, cancellationToken))
-                        .orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()))
+                    cancellationToken
                 );
                 return Optional.of(result.previewResult());
             }, state.getExecutorService());
@@ -75,20 +72,13 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
                 }
 
                 final RootStorage rootStorage = state.getRootStorageProvider().get();
-                final CraftingInitializer.SolveAndPreviewResult<TreePreview> result =
-                    CraftingInitializer.solveAndCalculatePreview(
+                final CraftingInitializer.SolveAndTreePreviewResult result =
+                    CraftingInitializer.solveAndCalculateTreePreview(
                         rootStorage,
                         state.getPatternRepository(),
                         resource,
                         amount,
-                        cancellationToken,
-                        (init, path) -> CraftingInitializer.calculateTreePreview(
-                            resource,
-                            amount,
-                            rootStorage,
-                            init,
-                            path
-                        )
+                        cancellationToken
                     );
                 return Optional.of(result.previewResult());
             }, state.getExecutorService());
