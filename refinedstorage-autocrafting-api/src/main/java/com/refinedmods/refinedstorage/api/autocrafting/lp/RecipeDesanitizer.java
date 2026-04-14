@@ -99,6 +99,60 @@ public final class RecipeDesanitizer {
         return sanitizedResources.copy();
     }
 
+    /**
+     * Decodes a sanitized MRK-based {@link ResourcePool} into a concrete pool whose keys are
+     * single-member {@link MultiResourceKey}s.  For each MRK entry the requested amount is
+     * satisfied greedily from {@code concreteStartingResources}, consuming each member in
+     * member-list order.  Any remainder that cannot be resolved against concrete storage falls
+     * back to the first member of the MRK (e.g. for missing resources).
+     */
+    public static ResourcePool decodeSanitizedResourcePool(
+        final ResourcePool sanitizedResources,
+        final Map<ResourceKey, Long> concreteStartingResources,
+        final CancellationToken cancellationToken
+    ) {
+        Objects.requireNonNull(sanitizedResources, "sanitizedResources cannot be null");
+        Objects.requireNonNull(concreteStartingResources, "concreteStartingResources cannot be null");
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        throwIfCancelled(cancellationToken);
+
+        final Map<ResourceKey, Long> remaining = new LinkedHashMap<>(concreteStartingResources);
+        final ResourcePool decoded = ResourcePool.empty();
+        for (final Map.Entry<MultiResourceKey, Long> entry : sanitizedResources) {
+            throwIfCancelled(cancellationToken);
+            final long amount = entry.getValue();
+            if (amount <= 0L) {
+                continue;
+            }
+            allocateIntoPool(decoded, entry.getKey(), amount, remaining);
+        }
+        return decoded;
+    }
+
+    private static void allocateIntoPool(
+        final ResourcePool decoded,
+        final MultiResourceKey multiResourceKey,
+        final long totalNeeded,
+        final Map<ResourceKey, Long> remainingConcreteStorage
+    ) {
+        long remaining = totalNeeded;
+        for (final ResourceKey member : multiResourceKey.members()) {
+            if (remaining <= 0L) {
+                break;
+            }
+            final long available = Math.max(0L, remainingConcreteStorage.getOrDefault(member, 0L));
+            final long used = Math.min(remaining, available);
+            if (used > 0L) {
+                decoded.addAmount(new MultiResourceKey(List.of(member)), used);
+                remainingConcreteStorage.put(member, available - used);
+                remaining -= used;
+            }
+        }
+        if (remaining > 0L) {
+            decoded.addAmount(new MultiResourceKey(List.of(multiResourceKey.members().getFirst())), remaining);
+        }
+    }
+
     public static List<RecipeApplicationStep> decodePlanSteps(
         final List<RecipeApplicationStep> steps,
         final ResourcePool availableResources
