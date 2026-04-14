@@ -16,12 +16,14 @@ public class PatternRepositoryImpl implements PatternRepository {
     private final Set<Pattern> patterns = new HashSet<>();
     private final Set<Pattern> patternsView = Collections.unmodifiableSet(patterns);
     private final Map<ResourceKey, PriorityQueue<PatternHolder>> patternsByOutput = new HashMap<>();
+    private final Map<Pattern, Integer> priorities = new HashMap<>();
     private final Set<ResourceKey> outputs = new HashSet<>();
     private final Set<ResourceKey> outputsView = Collections.unmodifiableSet(outputs);
 
     @Override
     public void add(final Pattern pattern, final int priority) {
         patterns.add(pattern);
+        priorities.put(pattern, priority);
         pattern.layout().outputs().forEach(output -> outputs.add(output.resource()));
         for (final ResourceAmount output : pattern.layout().outputs()) {
             patternsByOutput.computeIfAbsent(output.resource(), k -> new PriorityQueue<>(
@@ -32,6 +34,7 @@ public class PatternRepositoryImpl implements PatternRepository {
 
     @Override
     public void update(final Pattern pattern, final int priority) {
+        priorities.put(pattern, priority);
         for (final ResourceAmount output : pattern.layout().outputs()) {
             final PriorityQueue<PatternHolder> holders = patternsByOutput.get(output.resource());
             if (holders == null) {
@@ -43,8 +46,14 @@ public class PatternRepositoryImpl implements PatternRepository {
     }
 
     @Override
+    public int getPriority(final Pattern pattern) {
+        return priorities.getOrDefault(pattern, 0);
+    }
+
+    @Override
     public void remove(final Pattern pattern) {
         patterns.remove(pattern);
+        priorities.remove(pattern);
         for (final ResourceAmount output : pattern.layout().outputs()) {
             final PriorityQueue<PatternHolder> holders = patternsByOutput.get(output.resource());
             if (holders == null) {

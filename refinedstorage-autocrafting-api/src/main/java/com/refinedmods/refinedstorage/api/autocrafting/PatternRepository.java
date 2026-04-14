@@ -13,6 +13,8 @@ public interface PatternRepository {
 
     void update(Pattern pattern, int priority);
 
+    int getPriority(Pattern pattern);
+
     void remove(Pattern pattern);
 
     Collection<Pattern> getByOutput(ResourceKey output);
