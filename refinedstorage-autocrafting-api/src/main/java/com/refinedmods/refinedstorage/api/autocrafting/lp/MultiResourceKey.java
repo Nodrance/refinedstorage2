@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * A virtual resource representing a set of interchangeable {@link ResourceKey}s.
@@ -80,6 +81,26 @@ public final class MultiResourceKey implements ResourceKey {
 
     @Override
     public String toString() {
-        return "MultiResourceKey" + members;
+        return "MRK[" + members.stream().map(m -> {
+            // Try to extract a concise name for ItemResource, else fallback to toString
+            if (m.getClass().getSimpleName().equals("ItemResource")) {
+                try {
+                    java.lang.reflect.Field itemField = m.getClass().getDeclaredField("item");
+                    itemField.setAccessible(true);
+                    Object item = itemField.get(m);
+                    // Use the registry name if possible
+                    java.lang.reflect.Method getDescriptionId = item.getClass().getMethod("getDescriptionId");
+                    String descId = (String) getDescriptionId.invoke(item);
+                    // descId is like "item.minecraft.oak_planks", take the last part
+                    String[] parts = descId.split("\\.");
+                    return parts[parts.length - 1];
+                } catch (Exception e) {
+                    // fallback
+                    return m.toString();
+                }
+            } else {
+                return m.toString();
+            }
+        }).collect(Collectors.joining(", ")) + "]";
     }
 }

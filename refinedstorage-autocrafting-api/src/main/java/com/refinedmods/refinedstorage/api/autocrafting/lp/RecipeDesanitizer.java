@@ -78,6 +78,17 @@ public final class RecipeDesanitizer {
 					decoded.addAmount(allocated.getKey(), allocated.getValue());
 					remainingAvailable.subtractAmount(allocated.getKey(), allocated.getValue());
 				}
+				if (allocatedTotal < amount) {
+					final long unallocated = amount - allocatedTotal;
+					final ResourceKey fallbackResource = fallbackResourceFor(multiResourceKey);
+					decoded.addAmount(fallbackResource, unallocated);
+					LOGGER.info(
+						"[LP] RecipeDesanitizer.decodeSanitizedResources falling back unresolved multi-key amount to first option: multiKey={} fallbackResource={} unresolvedAmount={}",
+						resource,
+						fallbackResource,
+						unallocated
+					);
+				}
 			} else {
 				LOGGER.info(
 					"[LP] RecipeDesanitizer.decodeSanitizedResources direct resource copy: resource={} amount={}",
@@ -176,7 +187,17 @@ public final class RecipeDesanitizer {
 		while (iterationsLeft > 0L) {
 			throwIfCancelled(cancellationToken);
 
-			final ResourcePool perIterationInput = decodeSingleIterationInput(recipe.input(), remainingAvailable);
+			final DecodedIterationInput decodedInput = decodeSingleIterationInput(recipe.input(), remainingAvailable);
+			if (!decodedInput.unresolvedInput().isEmpty()) {
+				LOGGER.info(
+					"[LP] RecipeDesanitizer.decodeSanitizedStep unresolved per-iteration input; stopping decode for recipeId={} unresolvedInput={} remainingAvailable={}",
+					recipe.recipeId(),
+					summarizePool(decodedInput.unresolvedInput()),
+					summarizePool(remainingAvailable)
+				);
+				break;
+			}
+			final ResourcePool perIterationInput = decodedInput.input();
 			final long batchSize = computeBatchSize(iterationsLeft, perIterationInput, remainingAvailable);
 			LOGGER.info(
 				"[LP] RecipeDesanitizer.decodeSanitizedStep batch: recipeId={} iterationsLeft={} perIterationInput={} batchSize={} remainingAvailableBefore={}",
@@ -217,11 +238,12 @@ public final class RecipeDesanitizer {
 		}
 	}
 
-	private static ResourcePool decodeSingleIterationInput(
+	private static DecodedIterationInput decodeSingleIterationInput(
 		final ResourcePool sanitizedInput,
 		final ResourcePool remainingAvailable
 	) {
 		final ResourcePool perIterationInput = ResourcePool.empty();
+		final ResourcePool unresolvedPerIterationInput = ResourcePool.empty();
 
 		for (final Map.Entry<ResourceKey, Long> input : sanitizedInput) {
 			final ResourceKey resource = input.getKey();
@@ -232,15 +254,27 @@ public final class RecipeDesanitizer {
 
 			if (resource instanceof MultiResourceKey multiResourceKey) {
 				final Map<ResourceKey, Long> allocation = multiResourceKey.allocateConcrete(perIteration, remainingAvailable);
+				final long allocatedTotal = sumMapValues(allocation);
 				for (final Map.Entry<ResourceKey, Long> allocated : allocation.entrySet()) {
 					perIterationInput.addAmount(allocated.getKey(), allocated.getValue());
+				}
+				if (allocatedTotal < perIteration) {
+					final long unresolved = perIteration - allocatedTotal;
+					final ResourceKey fallbackResource = fallbackResourceFor(multiResourceKey);
+					perIterationInput.addAmount(fallbackResource, unresolved);
+					LOGGER.info(
+						"[LP] RecipeDesanitizer.decodeSingleIterationInput falling back unresolved multi-key amount to first option: multiKey={} fallbackResource={} unresolvedAmount={}",
+						resource,
+						fallbackResource,
+						unresolved
+					);
 				}
 			} else {
 				perIterationInput.addAmount(resource, perIteration);
 			}
 		}
 
-		return perIterationInput;
+		return new DecodedIterationInput(perIterationInput, unresolvedPerIterationInput);
 	}
 
 	private static long computeBatchSize(
@@ -314,5 +348,19 @@ public final class RecipeDesanitizer {
 			total += value;
 		}
 		return total;
+	}
+
+	private static ResourceKey fallbackResourceFor(final MultiResourceKey multiResourceKey) {
+		if (!multiResourceKey.members().isEmpty()) {
+			return multiResourceKey.members().getFirst();
+		}
+		return multiResourceKey;
+	}
+
+	private record DecodedIterationInput(ResourcePool input, ResourcePool unresolvedInput) {
+		private DecodedIterationInput {
+			input = input.copy();
+			unresolvedInput = unresolvedInput.copy();
+		}
 	}
 }

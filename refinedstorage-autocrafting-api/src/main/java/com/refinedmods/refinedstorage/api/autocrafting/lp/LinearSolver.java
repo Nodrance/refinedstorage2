@@ -396,6 +396,12 @@ public final class LinearSolver {
 				}
 				amount += recipeCoefficient(recipe, resource) * usage;
 			}
+			// LOGGER.info("[LP] computeFinalInventoryValues: resource={} startingAmount={} netRecipeChange={} finalAmount={}",
+			// 	resource,
+			// 	startingResources.getAmount(resource),
+			// 	amount - startingResources.getAmount(resource),
+			// 	amount
+			// );
 			finalInventoryValues.setAmount(resource, amount);
 		}
 		return finalInventoryValues;

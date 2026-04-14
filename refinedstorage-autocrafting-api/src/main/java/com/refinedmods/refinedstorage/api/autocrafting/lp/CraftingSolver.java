@@ -62,7 +62,7 @@ public final class CraftingSolver {
 					computeRequiredBaseItemsAndSolution(recipes, startingResources, target);
 				LOGGER.info(
 					"[LP] solve: target requires base items (resourceCount={}, totalAmount={})",
-					countResources(deficitAnalysis.requiredBaseItems()),
+					deficitAnalysis.requiredBaseItems(),
 					totalAmount(deficitAnalysis.requiredBaseItems())
 				);
 				throwIfCancelled();
@@ -89,9 +89,8 @@ public final class CraftingSolver {
 			final DeficitAnalysisResult deficitAnalysis =
 				computeRequiredBaseItemsAndSolution(reducedRecipes, startingResources, target);
 			LOGGER.info(
-				"[LP] solve: fallback deficit analysis requires base items (resourceCount={}, totalAmount={})",
-				countResources(deficitAnalysis.requiredBaseItems()),
-				totalAmount(deficitAnalysis.requiredBaseItems())
+				"[LP] solve: fallback deficit analysis requires base items {}",
+				deficitAnalysis.requiredBaseItems()
 			);
 			throwIfCancelled();
 			return buildRecipeApplicationPath(reducedRecipes, startingResources, deficitAnalysis);
@@ -112,10 +111,9 @@ public final class CraftingSolver {
 			final ResourcePool required = computeRequiredBaseItemsAndSolution(recipes, startingResources, target)
 				.requiredBaseItems();
 			LOGGER.info(
-				"[LP] computeRequiredBaseItems: target={} requiredResourceCount={} totalRequiredAmount={}",
+				"[LP] computeRequiredBaseItems: target={} required={}",
 				target,
-				countResources(required),
-				totalAmount(required)
+				required
 			);
 			return required;
 		} catch (final CancellationException e) {
