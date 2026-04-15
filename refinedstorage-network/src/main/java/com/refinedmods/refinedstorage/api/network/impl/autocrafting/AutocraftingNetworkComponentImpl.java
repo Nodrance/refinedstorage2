@@ -2,6 +2,7 @@ package com.refinedmods.refinedstorage.api.network.impl.autocrafting;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
+import com.refinedmods.refinedstorage.api.autocrafting.PatternRepositoryImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreview;
@@ -19,7 +20,10 @@ import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -28,13 +32,34 @@ import java.util.function.Supplier;
 import javax.annotation.Nullable;
 
 public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComponent, ParentContainer {
+    private final Supplier<RootStorage> rootStorageProvider;
+    private final ExecutorService executorService;
+    private final Set<PatternProvider> providers = new HashSet<>();
+    private final Map<Pattern, PatternProvider> providerByPattern = new HashMap<>();
+    private final Map<PatternLayout, List<ExternalPatternSink>> sinksByPatternLayout = new HashMap<>();
+    private final Map<TaskId, PatternProvider> providerByTaskId = new HashMap<>();
+    private final Set<PatternListener> patternListeners = new HashSet<>();
+    private final Set<TaskStatusListener> statusListeners = new HashSet<>();
+    private final PatternRepositoryImpl patternRepository = new PatternRepositoryImpl();
     private final AutocraftingNetworkComponentState state;
     private final TraditionalAutocraftingNetworkComponentImpl traditionalAutocrafting;
     private final LinearAutocraftingNetworkComponentImpl linearAutocrafting;
 
     public AutocraftingNetworkComponentImpl(final Supplier<RootStorage> rootStorageProvider,
                                             final ExecutorService executorService) {
-        this.state = new AutocraftingNetworkComponentState(rootStorageProvider, executorService);
+        this.rootStorageProvider = rootStorageProvider;
+        this.executorService = executorService;
+        this.state = new AutocraftingNetworkComponentState(
+            this.rootStorageProvider,
+            this.executorService,
+            this.providers,
+            this.providerByPattern,
+            this.sinksByPatternLayout,
+            this.providerByTaskId,
+            this.patternListeners,
+            this.statusListeners,
+            this.patternRepository
+        );
         this.traditionalAutocrafting = new TraditionalAutocraftingNetworkComponentImpl(state);
         this.linearAutocrafting = new LinearAutocraftingNetworkComponentImpl(state);
     }

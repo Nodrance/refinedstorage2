@@ -23,8 +23,6 @@ import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,18 +35,32 @@ import org.slf4j.Logger;
 final class AutocraftingNetworkComponentState {
     private final Supplier<RootStorage> rootStorageProvider;
     private final ExecutorService executorService;
-    private final Set<PatternProvider> providers = new HashSet<>();
-    private final Map<Pattern, PatternProvider> providerByPattern = new HashMap<>();
-    private final Map<PatternLayout, List<ExternalPatternSink>> sinksByPatternLayout = new HashMap<>();
-    private final Map<TaskId, PatternProvider> providerByTaskId = new HashMap<>();
-    private final Set<PatternListener> patternListeners = new HashSet<>();
-    private final Set<TaskStatusListener> statusListeners = new HashSet<>();
-    private final PatternRepositoryImpl patternRepository = new PatternRepositoryImpl();
+    private final Set<PatternProvider> providers;
+    private final Map<Pattern, PatternProvider> providerByPattern;
+    private final Map<PatternLayout, List<ExternalPatternSink>> sinksByPatternLayout;
+    private final Map<TaskId, PatternProvider> providerByTaskId;
+    private final Set<PatternListener> patternListeners;
+    private final Set<TaskStatusListener> statusListeners;
+    private final PatternRepositoryImpl patternRepository;
 
     AutocraftingNetworkComponentState(final Supplier<RootStorage> rootStorageProvider,
-                                      final ExecutorService executorService) {
+                                      final ExecutorService executorService,
+                                      final Set<PatternProvider> providers,
+                                      final Map<Pattern, PatternProvider> providerByPattern,
+                                      final Map<PatternLayout, List<ExternalPatternSink>> sinksByPatternLayout,
+                                      final Map<TaskId, PatternProvider> providerByTaskId,
+                                      final Set<PatternListener> patternListeners,
+                                      final Set<TaskStatusListener> statusListeners,
+                                      final PatternRepositoryImpl patternRepository) {
         this.rootStorageProvider = rootStorageProvider;
         this.executorService = executorService;
+        this.providers = providers;
+        this.providerByPattern = providerByPattern;
+        this.sinksByPatternLayout = sinksByPatternLayout;
+        this.providerByTaskId = providerByTaskId;
+        this.patternListeners = patternListeners;
+        this.statusListeners = statusListeners;
+        this.patternRepository = patternRepository;
     }
 
     Supplier<RootStorage> getRootStorageProvider() {
