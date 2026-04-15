@@ -82,9 +82,11 @@ public final class CraftingInitializer {
 			patternPriorities
 		);
 
+		final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
 		final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
 			RecipeAnalyzer.collectRelevantResourceKeys(concreteRecipes)
 		);
+		relevantResources.add(targetResource);
 
 		final ResourcePool relevantStartingResources = buildRelevantStartingResources(
 			rootStorage,
@@ -95,7 +97,6 @@ public final class CraftingInitializer {
 			relevantResources
 		);
 
-        final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
 		final ResourcePool target = ResourcePool.empty();
 		final long targetAmount = relevantStartingResources.getAmount(targetResource) + amount;
 		target.setAmount(targetResource, targetAmount);
@@ -161,10 +162,10 @@ public final class CraftingInitializer {
 			initialization.concreteRecipes(),
 			initialization.relevantStartingResources(),
 			initialization.target()
-		).map(path -> desanitizeRecipeApplicationPath(path, initialization.relevantStartingResources(), initialization.concreteStartingResources(), cancellationToken));
+		).map(path -> desanitizeRecipeApplicationPath(path, initialization.concreteStartingResources(), cancellationToken));
 	}
 
-	public static Optional<LpStepPlan> solveToStepPlan(
+	public static Optional<RecipeApplicationPath> solveToStepPlan(
 		final RootStorage rootStorage,
 		final PatternRepository patternRepository,
 		final ResourceKey resource,
@@ -179,11 +180,10 @@ public final class CraftingInitializer {
 			amount,
 			cancellationToken
 		);
-		return solve(initialization, cancellationToken)
-			.map(path -> toLpStepPlan(path.steps(), initialization.relevantPatterns(), initialization.concreteStartingResources(), cancellationToken));
+		return solve(initialization, cancellationToken);
 	}
 
-	public static Optional<LpStepPlan> solveToStepPlan(
+	public static Optional<RecipeApplicationPath> solveToStepPlan(
 		final Initialization initialization,
 		final CancellationToken cancellationToken
 	) {
@@ -192,8 +192,7 @@ public final class CraftingInitializer {
 		Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
 		throwIfCancelled(cancellationToken);
 
-		return solve(initialization, cancellationToken)
-			.map(path -> toLpStepPlan(path.steps(), initialization.relevantPatterns(), initialization.concreteStartingResources(), cancellationToken));
+		return solve(initialization, cancellationToken);
 	}
 
 	public static long findMaxCraftableAmount(
@@ -208,18 +207,6 @@ public final class CraftingInitializer {
 			return 0L;
 		}
 
-		final long lpUpperBound = LpStepPlanCalculator.calculateMaxAmount(
-			patternRepository.getAll(),
-			LOGGER,
-			rootStorage,
-			resource,
-			amount,
-			cancellationToken
-		);
-		if (cancellationToken.isCancelled() || lpUpperBound <= 0L) {
-			return 0L;
-		}
-
 		final Initialization maxCalculationInitialization = initialize(
 			rootStorage,
 			patternRepository,
@@ -227,121 +214,28 @@ public final class CraftingInitializer {
 			1L,
 			cancellationToken
 		);
+		if (cancellationToken.isCancelled()) {
+			return 0L;
+		}
 		final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
 
-		final long n = lpUpperBound;
-		final boolean nPlusOneCraftable = n < amount
-			&& n < Long.MAX_VALUE
-			&& canCraftWithoutMissingResources(maxCalculationInitialization, targetResource, n + 1L, cancellationToken);
-		if (cancellationToken.isCancelled()) {
-			return 0L;
-		}
-
-		final boolean nCraftable = canCraftWithoutMissingResources(
-			maxCalculationInitialization,
-			targetResource,
-			n,
+		final LinearSolver.Result result = new LinearSolver(
+			maxCalculationInitialization.concreteRecipes(),
+			maxCalculationInitialization.relevantResources(),
+			maxCalculationInitialization.relevantStartingResources(),
+			ResourcePool.empty(),
+			Set.of(),
+			Set.of(),
+			LinearSolver.Options.defaults(),
 			cancellationToken
-		);
-		if (cancellationToken.isCancelled()) {
+		).maximize(targetResource);
+		if (cancellationToken.isCancelled() || result == null) {
 			return 0L;
 		}
 
-		if (nPlusOneCraftable) {
-			long best = n + 1L;
-			if (best >= amount) {
-				return amount;
-			}
-
-			long high = best;
-			while (high < amount && !cancellationToken.isCancelled()) {
-				final long candidate = high > Long.MAX_VALUE / 2 ? amount : Math.min(amount, high * 2L);
-				if (candidate <= high) {
-					break;
-				}
-				if (canCraftWithoutMissingResources(maxCalculationInitialization, targetResource, candidate, cancellationToken)) {
-					best = candidate;
-					high = candidate;
-					if (best >= amount) {
-						return amount;
-					}
-				} else {
-					final long refined = binarySearchMaxCraftableAmount(
-						maxCalculationInitialization,
-						targetResource,
-						best + 1L,
-						candidate - 1L,
-						cancellationToken
-					);
-					return Math.max(best, refined);
-				}
-			}
-			return best;
-		}
-
-		if (nCraftable) {
-			return n;
-		}
-
-		if (n <= 1L) {
-			return 0L;
-		}
-
-		return binarySearchMaxCraftableAmount(
-			maxCalculationInitialization,
-			targetResource,
-			1L,
-			n - 1L,
-			cancellationToken
-		);
-	}
-
-	private static long binarySearchMaxCraftableAmount(
-		final Initialization initialization,
-		final MultiResourceKey targetResource,
-		final long low,
-		final long high,
-		final CancellationToken cancellationToken
-	) {
-		long left = low;
-		long right = high;
-		long best = 0L;
-		while (left <= right && !cancellationToken.isCancelled()) {
-			final long middle = left + ((right - left) / 2L);
-			if (canCraftWithoutMissingResources(initialization, targetResource, middle, cancellationToken)) {
-				best = middle;
-				left = middle + 1L;
-			} else {
-				right = middle - 1L;
-			}
-		}
-		return best;
-	}
-
-	private static boolean canCraftWithoutMissingResources(
-		final Initialization initialization,
-		final MultiResourceKey targetResource,
-		final long amount,
-		final CancellationToken cancellationToken
-	) {
-		if (cancellationToken.isCancelled()) {
-			return false;
-		}
-		final ResourcePool target = ResourcePool.empty();
-		target.setAmount(
-			targetResource,
-			initialization.relevantStartingResources().getAmount(targetResource) + amount
-		);
-		final Optional<RecipeApplicationPath> optionalPath = new CraftingSolver(cancellationToken).solve(
-			initialization.concreteRecipes(),
-			initialization.relevantStartingResources(),
-			target
-		);
-		if (optionalPath.isEmpty()) {
-			return false;
-		}
-
-		return optionalPath.get().applicationSet().missingResources().isEmpty();
+		final long startingAmount = maxCalculationInitialization.relevantStartingResources().getAmount(targetResource);
+		final long maxCraftableAmount = Math.max(0L, result.finalInventoryValues().getAmount(targetResource) - startingAmount);
+		return Math.min(amount, maxCraftableAmount);
 	}
 
 	public static SolveAndPreviewResult solveAndCalculatePreview(
@@ -425,14 +319,14 @@ public final class CraftingInitializer {
 		Objects.requireNonNull(initialization, "initialization cannot be null");
 		Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
 
-		final Optional<LpStepPlan> stepPlan = recipeApplicationPath.map(path -> toLpStepPlan(
-			path.steps(),
-			initialization.relevantPatterns(),
-			initialization.concreteStartingResources(),
-			CancellationToken.NONE
-		));
-		if (stepPlan.isPresent()) {
-			return buildTreePreviewFromSteps(resource, amount, rootStorage, stepPlan.get());
+		if (recipeApplicationPath.isPresent()) {
+			return buildTreePreviewFromPath(
+				resource,
+				amount,
+				rootStorage,
+				recipeApplicationPath.get(),
+				initialization.relevantPatterns()
+			);
 		}
 
 		final Preview preview = new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList());
@@ -441,14 +335,13 @@ public final class CraftingInitializer {
 
 	private static RecipeApplicationPath desanitizeRecipeApplicationPath(
 		final RecipeApplicationPath path,
-		final ResourcePool availableResources,
 		final Map<ResourceKey, Long> concreteStartingResources,
 		final CancellationToken cancellationToken
 	) {
 	        LOGGER.info("[LPT] Entering desanitizeRecipeApplicationPath()");
 		final List<RecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanSteps(
 			path.steps(),
-			availableResources,
+			concreteStartingResources,
 			cancellationToken
 		);
 
@@ -460,12 +353,12 @@ public final class CraftingInitializer {
 		);
 		final ResourcePool decodedMissing = RecipeDesanitizer.decodeSanitizedResources(
 			original.missingResources(),
-			availableResources,
+			original.usedResources(),
 			cancellationToken
 		);
 		final ResourcePool decodedFinal = RecipeDesanitizer.decodeSanitizedResources(
 			original.finalInventoryValues(),
-			availableResources,
+			original.usedResources(),
 			cancellationToken
 		);
 
@@ -481,113 +374,29 @@ public final class CraftingInitializer {
 		return new RecipeApplicationPath(decodedSet, decodedSteps);
 	}
 
-	private static LpStepPlan toLpStepPlan(
-		final List<RecipeApplicationStep> steps,
-		final Collection<Pattern> patterns,
-		final Map<ResourceKey, Long> concreteStartingResources,
-		final CancellationToken cancellationToken
-	) {
-	        LOGGER.info("[LPT] Entering toLpStepPlan()");
-		final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
-		for (final Pattern pattern : patterns) {
-			patternsById.put(pattern.id(), pattern);
-		}
-		final Map<ResourceKey, Long> remainingConcreteStorage = RecipeDesanitizer.copyConcreteStorage(concreteStartingResources);
-
-		final List<LpExecutionPlanStep> lpSteps = new ArrayList<>();
-		for (final RecipeApplicationStep step : steps) {
-			throwIfCancelled(cancellationToken);
-			final ConcreteRecipe recipe = step.recipe();
-			final Pattern sourcePattern = patternsById.get(recipe.sourcePatternId());
-			if (sourcePattern == null) {
-				continue;
-			}
-
-			appendDecodedStepBatches(
-				lpSteps,
-				sourcePattern,
-				recipe,
-				step.timesApplied(),
-				remainingConcreteStorage,
-				cancellationToken
-			);
-		}
-
-		return new LpStepPlan(lpSteps, false);
-	}
-
-	private static void appendDecodedStepBatches(
-		final List<LpExecutionPlanStep> target,
-		final Pattern sourcePattern,
-		final ConcreteRecipe recipe,
-		final long iterations,
-		final Map<ResourceKey, Long> remainingConcreteStorage,
-		final CancellationToken cancellationToken
-	) {
-		if (iterations <= 0L) {
-			return;
-		}
-
-		final int priority = clampToInt(recipe.priority());
-		final LpResourceSet output = RecipeDesanitizer.convertToConcreteOutputs(recipe.output());
-
-		LpResourceSet currentInput = null;
-		long currentBatchIterations = 0L;
-
-		for (long i = 0L; i < iterations; i++) {
-			throwIfCancelled(cancellationToken);
-			final LpResourceSet decodedInput = RecipeDesanitizer.decodeSanitizedResourcesToConcrete(
-				recipe.input(),
-				remainingConcreteStorage,
-				cancellationToken
-			);
-
-			if (currentInput != null && currentInput.asMap().equals(decodedInput.asMap())) {
-				currentBatchIterations++;
-				continue;
-			}
-
-			if (currentInput != null) {
-				target.add(new LpExecutionPlanStep(
-					new LpPatternRecipe(sourcePattern, currentInput, output, priority, null),
-					currentBatchIterations
-				));
-			}
-
-			currentInput = decodedInput;
-			currentBatchIterations = 1L;
-		}
-
-		if (currentInput != null) {
-			target.add(new LpExecutionPlanStep(
-				new LpPatternRecipe(sourcePattern, currentInput, output, priority, null),
-				currentBatchIterations
-			));
-		}
-	}
-
-	private static TreePreview buildTreePreviewFromSteps(
+	private static TreePreview buildTreePreviewFromPath(
 		final ResourceKey resource,
 		final long amount,
 		final RootStorage rootStorage,
-		final LpStepPlan stepPlan
+		final RecipeApplicationPath path,
+		final Collection<Pattern> relevantPatterns
 	) {
 	        LOGGER.info("[LPT] Entering buildTreePreviewFromSteps()");
 		final NodeBuilder root = new NodeBuilder(resource, amount);
 		final ArrayDeque<PendingNode> frontier = new ArrayDeque<>();
 		frontier.add(new PendingNode(root, amount));
 
-		final List<LpExecutionPlanStep> reversedSteps = new ArrayList<>(stepPlan.steps());
+		final List<RecipeApplicationStep> reversedSteps = new ArrayList<>(path.steps());
 		Collections.reverse(reversedSteps);
 
-		for (final LpExecutionPlanStep step : reversedSteps) {
+		for (final RecipeApplicationStep step : reversedSteps) {
 			if (frontier.isEmpty()) {
 				break;
 			}
 
 			final List<PendingNode> matchedNodes = new ArrayList<>();
 			for (final PendingNode pendingNode : frontier) {
-				if (step.recipe().output().getAmount(pendingNode.node.resource) > 0) {
+				if (getConcreteAmount(step.recipe().output(), pendingNode.node.resource) > 0L) {
 					matchedNodes.add(pendingNode);
 				}
 			}
@@ -595,7 +404,7 @@ public final class CraftingInitializer {
 				continue;
 			}
 
-			long remainingIterations = step.iterations();
+			long remainingIterations = step.timesApplied();
 			final List<PendingNode> nextNodes = new ArrayList<>();
 			for (final PendingNode pendingNode : matchedNodes) {
 				frontier.remove(pendingNode);
@@ -606,7 +415,7 @@ public final class CraftingInitializer {
 
 				final NodeBuilder node = pendingNode.node;
 				final long requiredAmount = pendingNode.requiredAmount;
-				final long outputPerIteration = step.recipe().output().getAmount(node.resource);
+				final long outputPerIteration = getConcreteAmount(step.recipe().output(), node.resource);
 				if (outputPerIteration <= 0) {
 					nextNodes.add(pendingNode);
 					continue;
@@ -624,12 +433,13 @@ public final class CraftingInitializer {
 				node.toCraft += craftedAmount;
 
 				for (final var input : step.recipe().input()) {
+					final ResourceKey inputResource = toConcreteResourceKey(input.getKey());
 					final long childAmount = input.getValue() * usedIterations;
 					if (childAmount <= 0) {
 						continue;
 					}
 
-					final NodeBuilder child = node.addChild(input.getKey(), childAmount);
+					final NodeBuilder child = node.addChild(inputResource, childAmount);
 					nextNodes.add(new PendingNode(child, childAmount));
 				}
 
@@ -647,9 +457,9 @@ public final class CraftingInitializer {
 		}
 
 		final Set<ResourceKey> producibleResources = new HashSet<>();
-		for (final LpExecutionPlanStep step : stepPlan.steps()) {
+		for (final RecipeApplicationStep step : path.steps()) {
 			for (final var output : step.recipe().output()) {
-				producibleResources.add(output.getKey());
+				producibleResources.add(toConcreteResourceKey(output.getKey()));
 			}
 		}
 
@@ -670,18 +480,46 @@ public final class CraftingInitializer {
 		}
 
 		final PreviewType type = hasMissing(root) ? PreviewType.MISSING_RESOURCES : PreviewType.SUCCESS;
-		return new TreePreview(type, root.build(), outputsOfPatternWithCycle(stepPlan));
+		return new TreePreview(type, root.build(), outputsOfPatternWithCycle(path, relevantPatterns));
 	}
 
-	private static List<ResourceAmount> outputsOfPatternWithCycle(final LpStepPlan stepPlan) {
+	private static List<ResourceAmount> outputsOfPatternWithCycle(
+		final RecipeApplicationPath path,
+		final Collection<Pattern> relevantPatterns
+	) {
 			LOGGER.info("[LPT] Entering outputsOfPatternWithCycle()");
-		if (!stepPlan.hasRecipeCycles()) {
+		final Map<UUID, ConcreteRecipe> recipesById = new LinkedHashMap<>();
+		for (final RecipeApplicationStep step : path.steps()) {
+			recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
+		}
+		final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult = RecipeAnalyzer.detectRecipeCycles(
+			new ArrayList<>(recipesById.values())
+		);
+		if (cycleDetectionResult.cycles().isEmpty()) {
 			return Collections.emptyList();
 		}
 
+		final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
+		for (final Pattern pattern : relevantPatterns) {
+			patternsById.put(pattern.id(), pattern);
+		}
+
+		final Set<UUID> cycleRecipeIds = new LinkedHashSet<>();
+		for (final List<UUID> cycle : cycleDetectionResult.cycles()) {
+			cycleRecipeIds.addAll(cycle);
+		}
+
 		final Set<ResourceAmount> outputs = new HashSet<>();
-		for (final LpExecutionPlanStep step : stepPlan.steps()) {
-			outputs.addAll(step.recipe().pattern().layout().outputs());
+		for (final UUID recipeId : cycleRecipeIds) {
+			final ConcreteRecipe recipe = recipesById.get(recipeId);
+			if (recipe == null) {
+				continue;
+			}
+			final Pattern pattern = patternsById.get(recipe.sourcePatternId());
+			if (pattern == null) {
+				continue;
+			}
+			outputs.addAll(pattern.layout().outputs());
 		}
 		return List.copyOf(outputs);
 	}
@@ -830,6 +668,17 @@ public final class CraftingInitializer {
 			return Integer.MIN_VALUE;
 		}
 		return (int) value;
+	}
+
+	private static long getConcreteAmount(final ResourcePool pool, final ResourceKey resource) {
+		return pool.getAmount(new MultiResourceKey(List.of(resource)));
+	}
+
+	private static ResourceKey toConcreteResourceKey(final MultiResourceKey key) {
+		if (!key.members().isEmpty()) {
+			return key.members().getFirst();
+		}
+		throw new IllegalStateException("MultiResourceKey has no members: " + key);
 	}
 
 	private static ResourcePool buildRelevantStartingResources(

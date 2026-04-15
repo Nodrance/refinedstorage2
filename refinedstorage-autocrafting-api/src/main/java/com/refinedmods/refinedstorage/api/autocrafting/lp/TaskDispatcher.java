@@ -12,6 +12,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.task.TaskListener;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskPlan;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskSnapshot;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskState;
+import com.refinedmods.refinedstorage.api.core.Action;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceList;
@@ -20,13 +21,16 @@ import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Predicate;
 
 public final class TaskDispatcher {
@@ -36,22 +40,26 @@ public final class TaskDispatcher {
     public static Optional<TaskId> addTask(final ResourceKey resource,
                                            final long amount,
                                            final Actor actor,
-                                           final LpStepPlan stepPlan,
+                                           final RecipeApplicationPath path,
+                                           final Collection<Pattern> patterns,
                                            final boolean notify,
                                            final SingleStepTaskCreator singleStepTaskCreator,
                                            final PatternTaskSubmitter patternTaskSubmitter,
                                            final Predicate<Pattern> hasProvider) {
-        if (stepPlan.steps().size() == 1) {
+        final Map<UUID, Pattern> patternsById = indexPatterns(patterns);
+
+        if (path.steps().size() == 1) {
             final TaskPlan singleStepPlan = toSingleStepPlan(
                 resource,
                 amount,
-                stepPlan.steps().getFirst(),
+                path.steps().getFirst(),
+                patternsById,
                 true
             );
             return Optional.of(singleStepTaskCreator.create(actor, singleStepPlan, notify));
         }
 
-        final Pattern rootPattern = findRootPattern(resource, stepPlan.steps());
+        final Pattern rootPattern = findRootPattern(resource, path.steps(), patternsById);
         if (rootPattern == null) {
             return Optional.empty();
         }
@@ -64,7 +72,8 @@ public final class TaskDispatcher {
             amount,
             actor,
             notify,
-            stepPlan,
+            path,
+            patternsById,
             rootPattern,
             hasProvider
         );
@@ -85,9 +94,13 @@ public final class TaskDispatcher {
     }
 
     private static Pattern findRootPattern(final ResourceKey resource,
-                                           final List<LpExecutionPlanStep> steps) {
+                                           final List<RecipeApplicationStep> steps,
+                                           final Map<UUID, Pattern> patternsById) {
         for (int index = steps.size() - 1; index >= 0; index--) {
-            final Pattern pattern = steps.get(index).recipe().pattern();
+            final Pattern pattern = patternsById.get(steps.get(index).recipe().sourcePatternId());
+            if (pattern == null) {
+                continue;
+            }
             final boolean producesResource = pattern.layout().outputs().stream()
                 .anyMatch(output -> output.resource().equals(resource));
             if (producesResource) {
@@ -99,14 +112,15 @@ public final class TaskDispatcher {
 
     private static TaskPlan toSingleStepPlan(final ResourceKey requestedResource,
                                              final long requestedAmount,
-                                             final LpExecutionPlanStep step,
+                                             final RecipeApplicationStep step,
+                                             final Map<UUID, Pattern> patternsById,
                                              final boolean root) {
-        final Pattern pattern = step.recipe().pattern();
-        final long iterations = step.iterations();
+        final Pattern pattern = requirePattern(step.recipe(), patternsById);
+        final long iterations = step.timesApplied();
 
         final Map<ResourceKey, Long> availablePerIteration = new LinkedHashMap<>();
         for (final var entry : step.recipe().input()) {
-            availablePerIteration.put(entry.getKey(), entry.getValue());
+            availablePerIteration.put(toConcreteResourceKey(entry.getKey()), entry.getValue());
         }
 
         final Map<Integer, Map<ResourceKey, Long>> ingredients = new LinkedHashMap<>();
@@ -164,7 +178,8 @@ public final class TaskDispatcher {
     private static final class DispatcherTask extends TaskImpl {
         private final long startTime = System.currentTimeMillis();
         private final int totalSteps;
-        private final List<LpExecutionPlanStep> pendingSteps;
+        private final List<RecipeApplicationStep> pendingSteps;
+        private final Map<UUID, Pattern> patternsById;
         private final MutableResourceList bufferedInternalStorage = MutableResourceListImpl.create();
         private final Map<TaskId, DispatchedSubTask> activeSubTasks = new LinkedHashMap<>();
         private final boolean strictOrdering;
@@ -176,13 +191,15 @@ public final class TaskDispatcher {
                                final long amount,
                                final Actor actor,
                                final boolean notify,
-                               final LpStepPlan lpStepPlan,
+                               final RecipeApplicationPath path,
+                               final Map<UUID, Pattern> patternsById,
                                final Pattern rootPattern,
                                final Predicate<Pattern> hasProvider) {
             super(createDispatcherPlan(resource, amount, rootPattern), actor, notify);
-            this.strictOrdering = lpStepPlan.hasRecipeCycles();
-            this.pendingSteps = new ArrayList<>(lpStepPlan.steps());
-            this.totalSteps = lpStepPlan.steps().size();
+            this.strictOrdering = hasRecipeCycles(path.steps());
+            this.pendingSteps = new ArrayList<>(path.steps());
+            this.totalSteps = path.steps().size();
+            this.patternsById = Map.copyOf(patternsById);
             this.hasProvider = hasProvider;
         }
 
@@ -235,12 +252,38 @@ public final class TaskDispatcher {
                 changed |= pruneCompletedSubTasks();
 
                 if (pendingSteps.isEmpty() && activeSubTasks.isEmpty()) {
-                    state = TaskState.COMPLETED;
+                    state = bufferedInternalStorage.isEmpty()
+                        ? TaskState.COMPLETED
+                        : TaskState.RETURNING_INTERNAL_STORAGE;
                     changed = true;
                 }
+            } else if (state == TaskState.RETURNING_INTERNAL_STORAGE) {
+                changed |= returnBufferedInternalStorage(rootStorage);
             }
 
             return changed;
+        }
+
+        private boolean returnBufferedInternalStorage(final RootStorage rootStorage) {
+            boolean returnedAny = false;
+            boolean returnedAll = true;
+            final Set<ResourceKey> resources = new HashSet<>(bufferedInternalStorage.getAll());
+            for (final ResourceKey resource : resources) {
+                final long amount = bufferedInternalStorage.get(resource);
+                final long inserted = rootStorage.insert(resource, amount, Action.EXECUTE, Actor.EMPTY);
+                if (inserted > 0) {
+                    bufferedInternalStorage.remove(resource, inserted);
+                    returnedAny = true;
+                }
+                if (inserted != amount) {
+                    returnedAll = false;
+                }
+            }
+            if (returnedAll) {
+                state = TaskState.COMPLETED;
+                return true;
+            }
+            return returnedAny;
         }
 
         private boolean pruneCompletedSubTasks() {
@@ -292,7 +335,7 @@ public final class TaskDispatcher {
                 return false;
             }
 
-            final LpExecutionPlanStep next = pendingSteps.getFirst();
+            final RecipeApplicationStep next = pendingSteps.getFirst();
             final Map<ResourceKey, Long> available = availableWithReservations(rootStorage);
             final long dispatchIterations = maxDispatchableIterations(next, available);
             if (dispatchIterations <= 0) {
@@ -320,7 +363,7 @@ public final class TaskDispatcher {
             do {
                 dispatchedAny = false;
                 for (int index = 0; index < pendingSteps.size(); index++) {
-                    final LpExecutionPlanStep step = pendingSteps.get(index);
+                    final RecipeApplicationStep step = pendingSteps.get(index);
                     final long dispatchIterations = maxDispatchableIterations(step, available);
                     if (dispatchIterations <= 0) {
                         continue;
@@ -344,28 +387,23 @@ public final class TaskDispatcher {
         }
 
         private void updatePendingStepAfterDispatch(final int index,
-                                                    final LpExecutionPlanStep originalStep,
+                                                    final RecipeApplicationStep originalStep,
                                                     final long dispatchedIterations) {
-            final long remainingIterations = originalStep.iterations() - dispatchedIterations;
+            final long remainingIterations = originalStep.timesApplied() - dispatchedIterations;
             if (remainingIterations <= 0) {
                 pendingSteps.remove(index);
                 return;
             }
-            pendingSteps.set(index, new LpExecutionPlanStep(originalStep.recipe(), remainingIterations));
+            pendingSteps.set(index, new RecipeApplicationStep(originalStep.recipe(), remainingIterations));
         }
 
-        private Optional<TaskId> dispatchSubTask(final LpExecutionPlanStep step,
+        private Optional<TaskId> dispatchSubTask(final RecipeApplicationStep step,
                                                  final long dispatchIterations,
                                                  final Map<ResourceKey, Long> requirements) {
-            final LpExecutionPlanStep dispatchedStep = new LpExecutionPlanStep(step.recipe(), dispatchIterations);
-            final boolean root = step.recipe()
-                .pattern()
-                .layout()
-                .outputs()
-                .stream()
-                .anyMatch(output -> output.resource().equals(getResource()));
-            final TaskPlan plan = toSingleStepPlan(getResource(), -1, dispatchedStep, root);
-            final Pattern pattern = step.recipe().pattern();
+            final RecipeApplicationStep dispatchedStep = new RecipeApplicationStep(step.recipe(), dispatchIterations);
+            final boolean root = step.recipe().output().getAmount(new MultiResourceKey(List.of(getResource()))) > 0L;
+            final TaskPlan plan = toSingleStepPlan(getResource(), -1, dispatchedStep, patternsById, root);
+            final Pattern pattern = requirePattern(step.recipe(), patternsById);
 
             if (!hasProvider.test(pattern)) {
                 return Optional.empty();
@@ -546,10 +584,10 @@ public final class TaskDispatcher {
 
         private long getPendingRequirement(final ResourceKey resource) {
             long amount = 0;
-            for (final LpExecutionPlanStep step : pendingSteps) {
+            for (final RecipeApplicationStep step : pendingSteps) {
                 for (final var entry : step.recipe().input()) {
-                    if (entry.getKey().equals(resource)) {
-                        amount += entry.getValue() * step.iterations();
+                    if (toConcreteResourceKey(entry.getKey()).equals(resource)) {
+                        amount += entry.getValue() * step.timesApplied();
                     }
                 }
             }
@@ -571,15 +609,15 @@ public final class TaskDispatcher {
             }
         }
 
-        private static long maxDispatchableIterations(final LpExecutionPlanStep step,
+        private static long maxDispatchableIterations(final RecipeApplicationStep step,
                                                       final Map<ResourceKey, Long> available) {
-            long maxIterations = step.iterations();
+            long maxIterations = step.timesApplied();
             for (final var entry : step.recipe().input()) {
                 final long perIterationAmount = entry.getValue();
                 if (perIterationAmount <= 0) {
                     continue;
                 }
-                final long availableAmount = available.getOrDefault(entry.getKey(), 0L);
+                final long availableAmount = available.getOrDefault(toConcreteResourceKey(entry.getKey()), 0L);
                 maxIterations = Math.min(maxIterations, availableAmount / perIterationAmount);
                 if (maxIterations <= 0) {
                     return 0;
@@ -588,11 +626,11 @@ public final class TaskDispatcher {
             return Math.max(0, maxIterations);
         }
 
-        private static Map<ResourceKey, Long> stepRequirements(final LpExecutionPlanStep step,
+        private static Map<ResourceKey, Long> stepRequirements(final RecipeApplicationStep step,
                                                                final long iterations) {
             final Map<ResourceKey, Long> requirements = new HashMap<>();
             for (final var entry : step.recipe().input()) {
-                requirements.merge(entry.getKey(), entry.getValue() * iterations, Long::sum);
+                requirements.merge(toConcreteResourceKey(entry.getKey()), entry.getValue() * iterations, Long::sum);
             }
             return requirements;
         }
@@ -602,5 +640,36 @@ public final class TaskDispatcher {
 
         private record SeededSubTask(TaskImpl task, Map<ResourceKey, Long> remainingRequirements) {
         }
+    }
+
+    private static Map<UUID, Pattern> indexPatterns(final Collection<Pattern> patterns) {
+        final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
+        for (final Pattern pattern : patterns) {
+            patternsById.put(pattern.id(), pattern);
+        }
+        return patternsById;
+    }
+
+    private static Pattern requirePattern(final ConcreteRecipe recipe, final Map<UUID, Pattern> patternsById) {
+        final Pattern pattern = patternsById.get(recipe.sourcePatternId());
+        if (pattern != null) {
+            return pattern;
+        }
+        throw new IllegalStateException("Missing pattern for recipe " + recipe.recipeId());
+    }
+
+    private static ResourceKey toConcreteResourceKey(final MultiResourceKey resourceKey) {
+        if (!resourceKey.members().isEmpty()) {
+            return resourceKey.members().getFirst();
+        }
+        throw new IllegalStateException("MultiResourceKey has no members: " + resourceKey);
+    }
+
+    private static boolean hasRecipeCycles(final List<RecipeApplicationStep> steps) {
+        final Map<UUID, ConcreteRecipe> recipesById = new LinkedHashMap<>();
+        for (final RecipeApplicationStep step : steps) {
+            recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
+        }
+        return !RecipeAnalyzer.detectRecipeCycles(new ArrayList<>(recipesById.values())).cycles().isEmpty();
     }
 }

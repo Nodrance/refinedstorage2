@@ -29,14 +29,14 @@ public final class RecipeDesanitizer {
         return new LinkedHashMap<>(concreteStorage);
     }
 
-    public static LpResourceSet decodeSanitizedResourcesToConcrete(
+    public static ResourcePool decodeSanitizedResourcesToConcrete(
         final ResourcePool sanitizedResources,
         final Map<ResourceKey, Long> remainingConcreteStorage
     ) {
         return decodeSanitizedResourcesToConcrete(sanitizedResources, remainingConcreteStorage, CancellationToken.NONE);
     }
 
-    public static LpResourceSet decodeSanitizedResourcesToConcrete(
+    public static ResourcePool decodeSanitizedResourcesToConcrete(
         final ResourcePool sanitizedResources,
         final Map<ResourceKey, Long> remainingConcreteStorage,
         final CancellationToken cancellationToken
@@ -46,14 +46,14 @@ public final class RecipeDesanitizer {
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
-        final LpResourceSet decoded = new LpResourceSet();
+        final ResourcePool decoded = ResourcePool.empty();
         for (final Map.Entry<MultiResourceKey, Long> entry : sanitizedResources) {
             throwIfCancelled(cancellationToken);
             final long amount = entry.getValue();
             if (amount <= 0L) {
                 continue;
             }
-            allocateInto(decoded, entry.getKey(), amount, remainingConcreteStorage);
+            allocateIntoPool(decoded, entry.getKey(), amount, remainingConcreteStorage);
         }
 
         LOGGER.info(
@@ -65,16 +65,16 @@ public final class RecipeDesanitizer {
         return decoded;
     }
 
-    public static LpResourceSet convertToConcreteOutputs(final ResourcePool sanitizedResources) {
+    public static ResourcePool convertToConcreteOutputs(final ResourcePool sanitizedResources) {
         Objects.requireNonNull(sanitizedResources, "sanitizedResources cannot be null");
 
-        final LpResourceSet decoded = new LpResourceSet();
+        final ResourcePool decoded = ResourcePool.empty();
         for (final Map.Entry<MultiResourceKey, Long> entry : sanitizedResources) {
             final long amount = entry.getValue();
             if (amount <= 0L) {
                 continue;
             }
-            decoded.addAmount(firstMemberOf(entry.getKey()), amount);
+            decoded.addAmount(new MultiResourceKey(List.of(firstMemberOf(entry.getKey()))), amount);
         }
         return decoded;
     }
@@ -155,48 +155,71 @@ public final class RecipeDesanitizer {
 
     public static List<RecipeApplicationStep> decodePlanSteps(
         final List<RecipeApplicationStep> steps,
-        final ResourcePool availableResources
+        final Map<ResourceKey, Long> concreteStartingResources
     ) {
-        return decodePlanSteps(steps, availableResources, CancellationToken.NONE);
+        return decodePlanSteps(steps, concreteStartingResources, CancellationToken.NONE);
     }
 
     public static List<RecipeApplicationStep> decodePlanSteps(
         final List<RecipeApplicationStep> steps,
-        final ResourcePool availableResources,
+        final Map<ResourceKey, Long> concreteStartingResources,
         final CancellationToken cancellationToken
     ) {
         Objects.requireNonNull(steps, "steps cannot be null");
-        Objects.requireNonNull(availableResources, "availableResources cannot be null");
+        Objects.requireNonNull(concreteStartingResources, "concreteStartingResources cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
-        return List.copyOf(steps);
-    }
+        final Map<ResourceKey, Long> remainingConcreteStorage = new LinkedHashMap<>(concreteStartingResources);
+        final List<RecipeApplicationStep> decodedSteps = new java.util.ArrayList<>();
+        for (final RecipeApplicationStep step : steps) {
+            throwIfCancelled(cancellationToken);
+            final ConcreteRecipe recipe = step.recipe();
+            final ResourcePool concreteOutput = convertToConcreteOutputs(recipe.output());
 
-    private static void allocateInto(
-        final LpResourceSet decoded,
-        final MultiResourceKey multiResourceKey,
-        final long totalNeeded,
-        final Map<ResourceKey, Long> remainingConcreteStorage
-    ) {
-        long remaining = totalNeeded;
-        for (final ResourceKey member : multiResourceKey.members()) {
-            if (remaining <= 0L) {
-                break;
+            ResourcePool currentInput = null;
+            long currentBatchTimesApplied = 0L;
+            for (long index = 0L; index < step.timesApplied(); index++) {
+                throwIfCancelled(cancellationToken);
+                final ResourcePool concreteInput = decodeSanitizedResourcesToConcrete(
+                    recipe.input(),
+                    remainingConcreteStorage,
+                    cancellationToken
+                );
+                if (currentInput != null && currentInput.asMap().equals(concreteInput.asMap())) {
+                    currentBatchTimesApplied++;
+                    continue;
+                }
+                if (currentInput != null) {
+                    decodedSteps.add(new RecipeApplicationStep(
+                        new ConcreteRecipe(
+                            recipe.recipeId(),
+                            recipe.sourcePatternId(),
+                            currentInput,
+                            concreteOutput,
+                            recipe.priority()
+                        ),
+                        currentBatchTimesApplied
+                    ));
+                }
+                currentInput = concreteInput;
+                currentBatchTimesApplied = 1L;
             }
 
-            final long available = Math.max(0L, remainingConcreteStorage.getOrDefault(member, 0L));
-            final long used = Math.min(remaining, available);
-            if (used > 0L) {
-                decoded.addAmount(member, used);
-                remainingConcreteStorage.put(member, available - used);
-                remaining -= used;
+            if (currentInput != null) {
+                decodedSteps.add(new RecipeApplicationStep(
+                    new ConcreteRecipe(
+                        recipe.recipeId(),
+                        recipe.sourcePatternId(),
+                        currentInput,
+                        concreteOutput,
+                        recipe.priority()
+                    ),
+                    currentBatchTimesApplied
+                ));
             }
         }
-
-        if (remaining > 0L) {
-            decoded.addAmount(firstMemberOf(multiResourceKey), remaining);
-        }
+        return List.copyOf(decodedSteps);
     }
 
     private static ResourceKey firstMemberOf(final MultiResourceKey multiResourceKey) {

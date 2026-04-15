@@ -124,11 +124,12 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             resource,
             amount,
             cancellationToken
-        ).flatMap(steps -> TaskDispatcher.addTask(
+        ).flatMap(path -> TaskDispatcher.addTask(
             resource,
             amount,
             actor,
-            steps,
+            path,
+            state.getPatternRepository().getAll(),
             notify,
             (taskActor, plan, shouldNotify) -> state.addSingleStepTask(taskActor, plan, shouldNotify, LOGGER),
             (pattern, task) -> {
@@ -167,11 +168,12 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             correctedAmount,
             cancellationToken
         )
-            .flatMap(steps -> TaskDispatcher.addTask(
+            .flatMap(path -> TaskDispatcher.addTask(
                 resource,
                 correctedAmount,
                 actor,
-                steps,
+                path,
+                state.getPatternRepository().getAll(),
                 false,
                 (taskActor, plan, shouldNotify) -> state.addSingleStepTask(taskActor, plan, shouldNotify, LOGGER),
                 (pattern, task) -> {
@@ -225,11 +227,12 @@ class LinearAutocraftingNetworkComponentImpl extends TraditionalAutocraftingNetw
             cancellationToken
         )
             .flatMap(
-                steps -> TaskDispatcher.addTask(
+                path -> TaskDispatcher.addTask(
                     resource,
                     correctedAmount,
                     actor,
-                    steps,
+                    path,
+                    state.getPatternRepository().getAll(),
                     false,
                     (taskActor, plan, shouldNotify) -> state.addSingleStepTask(taskActor, plan, shouldNotify, LOGGER),
                     (pattern, task) -> {
