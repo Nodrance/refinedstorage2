@@ -32,7 +32,10 @@ public final class PreviewCalculator {
         return calculatePreview(path, CancellationToken.NONE);
     }
 
-    public static Preview calculatePreview(final RecipeApplicationPath path, final CancellationToken cancellationToken) {
+    public static Preview calculatePreview(
+        final RecipeApplicationPath path,
+        final CancellationToken cancellationToken
+    ) {
         Objects.requireNonNull(path, "path cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
@@ -41,7 +44,10 @@ public final class PreviewCalculator {
         final Map<ResourceKey, Long> crafted = computeCraftedAmounts(path, cancellationToken);
         final Map<ResourceKey, Long> used = toPositiveMap(applicationSet.usedResources(), cancellationToken);
         final Map<ResourceKey, Long> missing = toPositiveMap(applicationSet.missingResources(), cancellationToken);
-        final Map<ResourceKey, Long> finalInventory = toRawMap(applicationSet.finalInventoryValues(), cancellationToken);
+        final Map<ResourceKey, Long> finalInventory = toRawMap(
+            applicationSet.finalInventoryValues(),
+            cancellationToken
+        );
 
         final Set<ResourceKey> universe = new LinkedHashSet<>();
         for (final MultiResourceKey key : applicationSet.relevantResourceKeys()) {
@@ -89,7 +95,8 @@ public final class PreviewCalculator {
 
         final PreviewType type = missing.isEmpty() ? PreviewType.SUCCESS : PreviewType.MISSING_RESOURCES;
         LOGGER.info(
-            "[LP] Preview calculated: type={}, items={}, craftedResources={}, usedResources={}, missingResources={}, totalToCraft={}, totalMissing={}",
+            "[LP] Preview calculated: type={}, items={}, craftedResources={}, usedResources={}, "
+                + "missingResources={}, totalToCraft={}, totalMissing={}",
             type,
             items.size(),
             crafted.size(),

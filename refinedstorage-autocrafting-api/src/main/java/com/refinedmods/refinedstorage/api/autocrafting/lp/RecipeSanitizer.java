@@ -333,7 +333,10 @@ public class RecipeSanitizer {
             if (ingredient.inputs().size() == 1) {
                 final MultiResourceKey mapped = resourceToKey.get(ingredient.inputs().getFirst());
                 if (mapped == null) {
-                    throw new IllegalStateException("No MultiResourceKey mapping found for ingredient input " + ingredient.inputs().getFirst());
+                    throw new IllegalStateException(
+                        "No MultiResourceKey mapping found for ingredient input "
+                            + ingredient.inputs().getFirst()
+                    );
                 }
                 nonFuzzyInputs.merge(mapped, ingredient.amount(), Long::sum);
             } else {

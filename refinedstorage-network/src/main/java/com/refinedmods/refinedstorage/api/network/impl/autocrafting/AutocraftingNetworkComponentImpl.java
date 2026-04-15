@@ -7,6 +7,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationT
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculatorImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeApplicationPath;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.TaskDispatcher;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewCraftingCalculatorListener;
@@ -36,6 +37,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
@@ -363,7 +365,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
                                              final CancellationToken cancellationToken) {
         ResourceAmount.validate(resource, amount);
         final RootStorage rootStorage = state.getRootStorageProvider().get();
-        return CraftingInitializer.solveToStepPlan(
+        return solveLinearCraftablePath(
             rootStorage,
             state.getPatternRepository(),
             resource,
@@ -404,7 +406,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
 
         final RootStorage rootStorage = state.getRootStorageProvider().get();
         final long correctedAmount = amount - currentlyCrafting;
-        return CraftingInitializer.solveToStepPlan(
+        return solveLinearCraftablePath(
             rootStorage,
             state.getPatternRepository(),
             resource,
@@ -459,7 +461,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
             return EnsureResult.MISSING_RESOURCES;
         }
 
-        return CraftingInitializer.solveToStepPlan(
+        return solveLinearCraftablePath(
             rootStorage,
             state.getPatternRepository(),
             resource,
@@ -486,6 +488,26 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
             ))
             .map(taskId -> EnsureResult.TASK_CREATED)
             .orElse(EnsureResult.MISSING_RESOURCES);
+    }
+
+    private static Optional<RecipeApplicationPath> solveLinearCraftablePath(
+        final RootStorage rootStorage,
+        final PatternRepositoryImpl patternRepository,
+        final ResourceKey resource,
+        final long amount,
+        final CancellationToken cancellationToken
+    ) {
+        try {
+            return CraftingInitializer.solveToStepPlan(
+                rootStorage,
+                patternRepository,
+                resource,
+                amount,
+                cancellationToken
+            ).filter(path -> path.applicationSet().missingResources().isEmpty());
+        } catch (final CancellationException e) {
+            return Optional.empty();
+        }
     }
 
     @Override

@@ -51,14 +51,14 @@ public final class MultiResourceKey {
             // Try to extract a concise name for ItemResource, else fallback to toString
             if (m.getClass().getSimpleName().equals("ItemResource")) {
                 try {
-                    java.lang.reflect.Field itemField = m.getClass().getDeclaredField("item");
+                    final java.lang.reflect.Field itemField = m.getClass().getDeclaredField("item");
                     itemField.setAccessible(true);
-                    Object item = itemField.get(m);
+                    final Object item = itemField.get(m);
                     // Use the registry name if possible
-                    java.lang.reflect.Method getDescriptionId = item.getClass().getMethod("getDescriptionId");
-                    String descId = (String) getDescriptionId.invoke(item);
+                    final java.lang.reflect.Method getDescriptionId = item.getClass().getMethod("getDescriptionId");
+                    final String descId = (String) getDescriptionId.invoke(item);
                     // descId is like "item.minecraft.oak_planks", take the last part
-                    String[] parts = descId.split("\\.");
+                    final String[] parts = descId.split("\\.");
                     return parts[parts.length - 1];
                 } catch (Exception e) {
                     // fallback
