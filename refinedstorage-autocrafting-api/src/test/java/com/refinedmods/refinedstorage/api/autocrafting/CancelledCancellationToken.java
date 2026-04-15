@@ -12,9 +12,4 @@ public class CancelledCancellationToken implements CancellationToken {
     public void cancel() {
         // no op
     }
-
-    @Override
-    public long timeRemainingMillis() {
-        return 0L;
-    }
 }
