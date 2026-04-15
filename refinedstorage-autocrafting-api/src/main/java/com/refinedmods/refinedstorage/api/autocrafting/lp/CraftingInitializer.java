@@ -503,18 +503,67 @@ public final class CraftingInitializer {
 				continue;
 			}
 
-			final int priority = clampToInt(recipe.priority());
-			final LpPatternRecipe lpRecipe = new LpPatternRecipe(
+			appendDecodedStepBatches(
+				lpSteps,
 				sourcePattern,
-				RecipeDesanitizer.decodeSanitizedResourcesToConcrete(recipe.input(), remainingConcreteStorage, cancellationToken),
-				RecipeDesanitizer.convertToConcreteOutputs(recipe.output()),
-				priority,
-				null
+				recipe,
+				step.timesApplied(),
+				remainingConcreteStorage,
+				cancellationToken
 			);
-			lpSteps.add(new LpExecutionPlanStep(lpRecipe, step.timesApplied()));
 		}
 
 		return new LpStepPlan(lpSteps, false);
+	}
+
+	private static void appendDecodedStepBatches(
+		final List<LpExecutionPlanStep> target,
+		final Pattern sourcePattern,
+		final ConcreteRecipe recipe,
+		final long iterations,
+		final Map<ResourceKey, Long> remainingConcreteStorage,
+		final CancellationToken cancellationToken
+	) {
+		if (iterations <= 0L) {
+			return;
+		}
+
+		final int priority = clampToInt(recipe.priority());
+		final LpResourceSet output = RecipeDesanitizer.convertToConcreteOutputs(recipe.output());
+
+		LpResourceSet currentInput = null;
+		long currentBatchIterations = 0L;
+
+		for (long i = 0L; i < iterations; i++) {
+			throwIfCancelled(cancellationToken);
+			final LpResourceSet decodedInput = RecipeDesanitizer.decodeSanitizedResourcesToConcrete(
+				recipe.input(),
+				remainingConcreteStorage,
+				cancellationToken
+			);
+
+			if (currentInput != null && currentInput.asMap().equals(decodedInput.asMap())) {
+				currentBatchIterations++;
+				continue;
+			}
+
+			if (currentInput != null) {
+				target.add(new LpExecutionPlanStep(
+					new LpPatternRecipe(sourcePattern, currentInput, output, priority, null),
+					currentBatchIterations
+				));
+			}
+
+			currentInput = decodedInput;
+			currentBatchIterations = 1L;
+		}
+
+		if (currentInput != null) {
+			target.add(new LpExecutionPlanStep(
+				new LpPatternRecipe(sourcePattern, currentInput, output, priority, null),
+				currentBatchIterations
+			));
+		}
 	}
 
 	private static TreePreview buildTreePreviewFromSteps(
