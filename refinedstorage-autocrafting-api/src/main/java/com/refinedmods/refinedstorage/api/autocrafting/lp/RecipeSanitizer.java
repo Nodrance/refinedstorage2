@@ -374,7 +374,8 @@ public class RecipeSanitizer {
                 ? deterministicVariantRecipeId(pattern.id(), input)
                 : pattern.id();
             final long priority = patternPriorities.getOrDefault(pattern.id(), 0);
-            result.add(new ConcreteRecipe(recipeId, pattern.id(), input, output, priority));
+            final long insertionOrder = result.size();
+            result.add(new ConcreteRecipe(recipeId, pattern.id(), input, output, priority, insertionOrder));
         }
     }
 

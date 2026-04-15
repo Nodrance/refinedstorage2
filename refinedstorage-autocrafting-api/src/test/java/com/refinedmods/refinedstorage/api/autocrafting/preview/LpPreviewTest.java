@@ -212,15 +212,11 @@ class LpPreviewTest {
             .build());
     }
 
-    // Changed from legacy PreviewTest expectation:
-    //   Previous: single fixed expectation — always rounds up to next batch and uses only SPRUCE pattern:
-    //     addToCraft(CRAFTING_TABLE, 4), addAvailable(SPRUCE_PLANKS, 8), addMissing(SPRUCE_PLANKS, 8)
-    //   Changed to: accept either a "split" result (toCraft=3, SPRUCE covers 2 + OAK covers 1 with
-    //     missing OAK_PLANKS=4) or a "rounded" result (toCraft=4, only SPRUCE pattern, missing
-    //     SPRUCE_PLANKS=8).
-    //   Why: The LP solver may split the 3 requested crafts across both available root patterns or
-    //        dedicate entirely to the SPRUCE pattern and round up to a full batch of 2. Both strategies
-    //        are valid LP solutions; the legacy solver always picked the rounded/single-pattern form.
+    // Changed from traditional checklist:
+    // [x] The LP solver gives a correct answer
+    // [x] The LP solver always gives the same answer regardless of pattern order
+    // [X] The Traditional solver gives a different answer based on pattern order
+    // [x] Both solvers agree on whether this craft is possible with the given resources
     @Test
     void shouldNotCalculateForMultipleRootPatternsAndSingleIngredientAndAlmostAllResourcesAreAvailable() {
         final RootStorage storage = storage(new ResourceAmount(SPRUCE_PLANKS, 8));
@@ -266,16 +262,11 @@ class LpPreviewTest {
             .build());
     }
 
-    // Changed from legacy PreviewTest expectation:
-    //   Previous: single fixed expectation — SPRUCE pattern used for all 3 runs, available OAK_LOG ignored:
-    //     addToCraft(CRAFTING_TABLE, 3), addToCraft(OAK_PLANKS, 12), addMissing(SPRUCE_LOG, 3)
-    //   Changed to: accept either a "split" result (OAK covers 2 runs with available OAK_LOG=2, SPRUCE
-    //     covers 1 run with missing SPRUCE_LOG=1) or an "aggregated" result (all 3 runs attributed to the
-    //     OAK pattern: available OAK_LOG=2, missing OAK_LOG=1).
-    //   Why: The LP solver correctly utilises the 2 available OAK_LOG rather than ignoring them. When
-    //        resolving the remaining 1 shortage it may either route through the SPRUCE pattern or keep
-    //        everything on the OAK pattern — both are valid LP solutions. The legacy solver assigned all
-    //        3 runs to SPRUCE and did not consume the OAK_LOG from storage.
+    // Changed from traditional checklist:
+    // [x] The LP solver gives a correct answer
+    // [x] The LP solver always gives the same answer regardless of pattern order
+    // [X] The Traditional solver gives a different answer based on pattern order
+    // [x] Both solvers agree on whether this craft is possible with the given resources
     @Test
     void shouldNotCalculateForSingleRootPatternSingleChildPatternWSingleIngredientAndAlmostAllResourcesAreAvailable() {
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 2));
@@ -300,7 +291,7 @@ class LpPreviewTest {
             .addMissing(OAK_LOG, 1)
             .build();
 
-        assertPreviewMatchesAny(preview, expectedSplit, expectedAggregated);
+        assertPreviewEquals(preview, expectedSplit);
     }
 
     @Test

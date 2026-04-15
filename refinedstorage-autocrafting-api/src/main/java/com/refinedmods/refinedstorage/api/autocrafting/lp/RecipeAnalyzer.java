@@ -131,6 +131,7 @@ public class RecipeAnalyzer {
             .sorted(Comparator
                 .comparingLong(ConcreteRecipe::priority)
                 .reversed()
+                .thenComparingLong(ConcreteRecipe::insertionOrder)
                 .thenComparing(ConcreteRecipe::recipeId))
             .toList();
 
@@ -245,6 +246,11 @@ public class RecipeAnalyzer {
         final List<ConcreteRecipe> recipes,
         final Map<UUID, PriorityKey> bestRecipePriorities
     ) {
+        final Map<UUID, ConcreteRecipe> recipeById = new HashMap<>();
+        for (final ConcreteRecipe recipe : recipes) {
+            recipeById.put(recipe.recipeId(), recipe);
+        }
+
         final List<RecipePriorityEntry> entries = new ArrayList<>();
         for (final ConcreteRecipe recipe : recipes) {
             final PriorityKey priority = bestRecipePriorities.get(recipe.recipeId());
@@ -254,6 +260,7 @@ public class RecipeAnalyzer {
         }
         entries.sort(
             Comparator.comparing(RecipePriorityEntry::priority)
+                .thenComparingLong(entry -> recipeById.get(entry.recipeId()).insertionOrder())
                 .thenComparing(RecipePriorityEntry::recipeId)
         );
         return entries;
@@ -278,7 +285,8 @@ public class RecipeAnalyzer {
                     recipe.sourcePatternId(),
                     recipe.input(),
                     recipe.output(),
-                    effectivePriority
+                    effectivePriority,
+                    recipe.insertionOrder()
                 ));
             } else {
                 result.add(recipe);

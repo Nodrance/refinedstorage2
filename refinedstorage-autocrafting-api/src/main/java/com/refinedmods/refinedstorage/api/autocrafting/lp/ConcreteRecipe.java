@@ -12,7 +12,8 @@ public record ConcreteRecipe(
     UUID sourcePatternId,
     ResourcePool input,
     ResourcePool output,
-    long priority
+    long priority,
+    long insertionOrder
 ) {
     public ConcreteRecipe {
         Objects.requireNonNull(recipeId, "recipeId cannot be null");

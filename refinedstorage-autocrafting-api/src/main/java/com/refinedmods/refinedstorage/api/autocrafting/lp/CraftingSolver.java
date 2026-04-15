@@ -172,8 +172,11 @@ public final class CraftingSolver {
         throwIfCancelled();
         LOGGER.info("[LP] computeRequiredBaseItemsAndSolution: analyzing deficit for target {}", target);
 
+        // Old LP parity: when building deficit resources, invert recipe priority order.
+        final List<ConcreteRecipe> deficitPriorityRecipes = reverseRecipePrioritiesForDeficitAnalysis(recipes);
+
         final List<ConcreteRecipe> selectedRecipes =
-            RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(recipes);
+            RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(deficitPriorityRecipes);
         LOGGER.info(
             "[LP] computeRequiredBaseItemsAndSolution: selectedRecipes={} totalRecipes={}",
             selectedRecipes.size(),
@@ -229,7 +232,7 @@ public final class CraftingSolver {
                 RecipeAnalyzer.detectRecipeCycles(usedRecipes);
             if (cycleDetectionResult.cycles().isEmpty()) {
                 final Set<MultiResourceKey> optimizationRelevantResources = new LinkedHashSet<>(
-                    RecipeAnalyzer.collectRelevantResourceKeys(recipes)
+                    RecipeAnalyzer.collectRelevantResourceKeys(deficitPriorityRecipes)
                 );
                 optimizationRelevantResources.addAll(target.resourceKeys());
                 LOGGER.info(
@@ -239,7 +242,7 @@ public final class CraftingSolver {
                     recipes.size()
                 );
                 final Optional<LinearSolver.Result> optimizedResult = optimizeDeficitResources(
-                    recipes,
+                    deficitPriorityRecipes,
                     optimizationRelevantResources,
                     startingResources,
                     target,
@@ -358,6 +361,19 @@ public final class CraftingSolver {
             }
         }
         return total;
+    }
+
+    private static List<ConcreteRecipe> reverseRecipePrioritiesForDeficitAnalysis(final List<ConcreteRecipe> recipes) {
+        return recipes.stream()
+            .map(recipe -> new ConcreteRecipe(
+                recipe.recipeId(),
+                recipe.sourcePatternId(),
+                recipe.input(),
+                recipe.output(),
+                -recipe.priority(),
+                recipe.insertionOrder()
+            ))
+            .toList();
     }
 
     private Optional<RecipeApplicationPath> buildRecipeApplicationPath(

@@ -6,29 +6,37 @@ import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
 
 public class PatternRepositoryImpl implements PatternRepository {
-    private final Set<Pattern> patterns = new HashSet<>();
+    private static final Comparator<PatternHolder> PATTERN_HOLDER_ORDER = Comparator
+        .comparingInt(PatternHolder::priority)
+        .reversed()
+        // Keep LP behavior aligned with the traditional system for tied priorities; removing this line is safe and only changes tie-break ordering.
+        .thenComparingLong(PatternHolder::insertionOrder);
+
+    private final Set<Pattern> patterns = new LinkedHashSet<>();
     private final Set<Pattern> patternsView = Collections.unmodifiableSet(patterns);
     private final Map<ResourceKey, PriorityQueue<PatternHolder>> patternsByOutput = new HashMap<>();
     private final Map<Pattern, Integer> priorities = new HashMap<>();
-    private final Set<ResourceKey> outputs = new HashSet<>();
+    private final Map<Pattern, Long> insertionOrderByPattern = new HashMap<>();
+    private long nextInsertionOrder = 0;
+    private final Set<ResourceKey> outputs = new LinkedHashSet<>();
     private final Set<ResourceKey> outputsView = Collections.unmodifiableSet(outputs);
 
     @Override
     public void add(final Pattern pattern, final int priority) {
         patterns.add(pattern);
         priorities.put(pattern, priority);
+        insertionOrderByPattern.put(pattern, nextInsertionOrder++);
         pattern.layout().outputs().forEach(output -> outputs.add(output.resource()));
         for (final ResourceAmount output : pattern.layout().outputs()) {
-            patternsByOutput.computeIfAbsent(output.resource(), k -> new PriorityQueue<>(
-                Comparator.comparingInt(PatternHolder::priority).reversed()
-            )).add(new PatternHolder(pattern, priority));
+            patternsByOutput.computeIfAbsent(output.resource(), k -> new PriorityQueue<>(PATTERN_HOLDER_ORDER))
+                .add(new PatternHolder(pattern, priority, insertionOrderByPattern.getOrDefault(pattern, Long.MAX_VALUE)));
         }
     }
 
@@ -41,7 +49,7 @@ public class PatternRepositoryImpl implements PatternRepository {
                 continue;
             }
             holders.removeIf(holder -> holder.pattern.equals(pattern));
-            holders.add(new PatternHolder(pattern, priority));
+            holders.add(new PatternHolder(pattern, priority, insertionOrderByPattern.getOrDefault(pattern, Long.MAX_VALUE)));
         }
     }
 
@@ -54,6 +62,7 @@ public class PatternRepositoryImpl implements PatternRepository {
     public void remove(final Pattern pattern) {
         patterns.remove(pattern);
         priorities.remove(pattern);
+        insertionOrderByPattern.remove(pattern);
         for (final ResourceAmount output : pattern.layout().outputs()) {
             final PriorityQueue<PatternHolder> holders = patternsByOutput.get(output.resource());
             if (holders == null) {
@@ -78,7 +87,10 @@ public class PatternRepositoryImpl implements PatternRepository {
         if (holders == null) {
             return Collections.emptyList();
         }
-        return holders.stream().map(holder -> holder.pattern).toList();
+        return holders.stream()
+            .sorted(PATTERN_HOLDER_ORDER)
+            .map(holder -> holder.pattern)
+            .toList();
     }
 
     @Override
@@ -91,6 +103,6 @@ public class PatternRepositoryImpl implements PatternRepository {
         return patternsView;
     }
 
-    private record PatternHolder(Pattern pattern, int priority) {
+    private record PatternHolder(Pattern pattern, int priority, long insertionOrder) {
     }
 }

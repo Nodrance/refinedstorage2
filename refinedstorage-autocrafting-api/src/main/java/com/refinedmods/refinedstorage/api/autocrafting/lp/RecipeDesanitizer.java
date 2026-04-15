@@ -198,7 +198,8 @@ public final class RecipeDesanitizer {
                             recipe.sourcePatternId(),
                             currentInput,
                             concreteOutput,
-                            recipe.priority()
+                            recipe.priority(),
+                            recipe.insertionOrder()
                         ),
                         currentBatchTimesApplied
                     ));
@@ -214,7 +215,8 @@ public final class RecipeDesanitizer {
                         recipe.sourcePatternId(),
                         currentInput,
                         concreteOutput,
-                        recipe.priority()
+                        recipe.priority(),
+                        recipe.insertionOrder()
                     ),
                     currentBatchTimesApplied
                 ));
