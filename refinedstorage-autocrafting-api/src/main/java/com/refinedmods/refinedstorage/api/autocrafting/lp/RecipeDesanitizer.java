@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Decodes sanitized MRK-based LP data back to concrete resources.
  *
- * Allocation greedily consumes concrete root storage for MRK members in member order.
+ * <p>Allocation greedily consumes concrete root storage for MRK members in member order.
  * Once concrete storage for a given MRK is exhausted, remaining demand falls back to the
  * first member of that MRK.
  */
@@ -57,7 +57,8 @@ public final class RecipeDesanitizer {
         }
 
         LOGGER.info(
-            "[LP] RecipeDesanitizer.decodeSanitizedResourcesToConcrete: sanitized={} decoded={} remainingConcreteStorage={}",
+            "[LP] RecipeDesanitizer.decodeSanitizedResourcesToConcrete: "
+                + "sanitized={} decoded={} remainingConcreteStorage={}",
             sanitizedResources,
             decoded,
             remainingConcreteStorage
