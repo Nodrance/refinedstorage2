@@ -118,6 +118,35 @@ public final class LinearSolver {
 		return result;
 	}
 
+	public Result minimizeTotalDeficitWithFloor(
+		final Set<MultiResourceKey> deficitResources,
+		final ResourcePool minimumFinalInventory
+	) {
+		throwIfCancelled();
+		final Set<MultiResourceKey> sanitizedDeficitResources = Set.copyOf(
+			Objects.requireNonNull(deficitResources, "deficitResources cannot be null")
+		);
+		final ResourcePool sanitizedMinimumFinalInventory = Objects.requireNonNull(
+			minimumFinalInventory,
+			"minimumFinalInventory cannot be null"
+		).copy();
+		final long deficitBefore = sumDeficitAmounts(sanitizedMinimumFinalInventory, sanitizedDeficitResources);
+		final Result result = solveForDeficitObjective(sanitizedDeficitResources, sanitizedMinimumFinalInventory);
+		final long deficitAfter = result == null
+			? deficitBefore
+			: sumDeficitAmounts(result.finalInventoryValues(), sanitizedDeficitResources);
+		final boolean deficitDecreased = result != null && deficitAfter < deficitBefore;
+		LOGGER.info(
+			"[LP] minimizeTotalDeficitWithFloor: deficitResourceCount={} feasible={} totalDeficitBefore={} totalDeficitAfter={} deficitDecreased={}",
+			sanitizedDeficitResources.size(),
+			result != null,
+			deficitBefore,
+			deficitAfter,
+			deficitDecreased
+		);
+		return result;
+	}
+
 	private Result solveWithObjective(
 		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId,
@@ -155,6 +184,41 @@ public final class LinearSolver {
 		}
 	}
 
+	private Result solveForDeficitObjective(
+		final Set<MultiResourceKey> deficitResources,
+		final ResourcePool minimumFinalInventory
+	) {
+		throwIfCancelled();
+
+		final FutureTask<Result> solveTask = new FutureTask<>(
+			() -> solveForDeficitObjectiveInternal(deficitResources, minimumFinalInventory)
+		);
+		final Thread solveThread = new Thread(solveTask, "lp-ojalgo-deficit-solve");
+		solveThread.setDaemon(true);
+		solveThread.start();
+
+		try {
+			return awaitNonCooperativeTask(
+				solveTask,
+				solveThread,
+				"solveForDeficitObjective",
+				false,
+				null,
+				null,
+				false,
+				Map.of()
+			);
+		} catch (final InterruptedException e) {
+			Thread.currentThread().interrupt();
+			cancellationToken.cancel();
+			solveThread.interrupt();
+			throw new CancellationException("Interrupted in solveForDeficitObjective");
+		} catch (final ExecutionException e) {
+			final Throwable cause = e.getCause() == null ? e : e.getCause();
+			throw new IllegalStateException("Failed in solveForDeficitObjective", cause);
+		}
+	}
+
 	private Result solveWithObjectiveInternal(
 		final MultiResourceKey objectiveResource,
 		final UUID objectiveRecipeId,
@@ -171,6 +235,29 @@ public final class LinearSolver {
 		throwIfCancelled();
 
 		final Optimisation.Result result = maximize ? model.maximise() : model.minimise();
+		if (!result.getState().isFeasible()) {
+			return null;
+		}
+
+		final Map<UUID, Long> recipeValues = extractUsedRecipeValues(variableByRecipeId);
+		final ResourcePool finalInventoryValues = computeFinalInventoryValues(recipeValues);
+		return new Result(Map.copyOf(recipeValues), finalInventoryValues.copy());
+	}
+
+	private Result solveForDeficitObjectiveInternal(
+		final Set<MultiResourceKey> deficitResources,
+		final ResourcePool minimumFinalInventory
+	) {
+		throwIfCancelled();
+
+		final ExpressionsBasedModel model = createModelWithDiagnostics();
+		final Map<UUID, Variable> variableByRecipeId = createRecipeVariables(model);
+		addResourceConstraints(model, variableByRecipeId);
+		addFinalInventoryFloorConstraints(model, variableByRecipeId, minimumFinalInventory, deficitResources);
+		configureDeficitObjective(model, variableByRecipeId, deficitResources);
+		throwIfCancelled();
+
+		final Optimisation.Result result = model.minimise();
 		if (!result.getState().isFeasible()) {
 			return null;
 		}
@@ -369,6 +456,53 @@ public final class LinearSolver {
 		}
 	}
 
+	private void addFinalInventoryFloorConstraints(
+		final ExpressionsBasedModel model,
+		final Map<UUID, Variable> variableByRecipeId,
+		final ResourcePool minimumFinalInventory,
+		final Set<MultiResourceKey> resources
+	) {
+		for (final MultiResourceKey resource : resources) {
+			throwIfCancelled();
+			final Expression floorExpression = model.newExpression("floor:" + resource);
+			final long lowerBound = minimumFinalInventory.getAmount(resource) - startingResources.getAmount(resource);
+			floorExpression.lower(lowerBound);
+			for (final ConcreteRecipe recipe : recipes) {
+				throwIfCancelled();
+				final long coefficient = recipeCoefficient(recipe, resource);
+				if (coefficient != 0) {
+					floorExpression.set(variableByRecipeId.get(recipe.recipeId()), coefficient);
+				}
+			}
+		}
+	}
+
+	private void configureDeficitObjective(
+		final ExpressionsBasedModel model,
+		final Map<UUID, Variable> variableByRecipeId,
+		final Set<MultiResourceKey> deficitResources
+	) {
+		final Expression objective = model.newExpression("deficit-objective").weight(1);
+		for (final MultiResourceKey resource : deficitResources) {
+			throwIfCancelled();
+			final Variable deficitVariable = model.addVariable("deficit:" + resource)
+				.integer(true)
+				.lower(0);
+			objective.set(deficitVariable, 1);
+
+			final Expression deficitDefinition = model.newExpression("deficit-constraint:" + resource);
+			deficitDefinition.lower(target.getAmount(resource) - startingResources.getAmount(resource));
+			deficitDefinition.set(deficitVariable, 1);
+			for (final ConcreteRecipe recipe : recipes) {
+				throwIfCancelled();
+				final long coefficient = recipeCoefficient(recipe, resource);
+				if (coefficient != 0) {
+					deficitDefinition.set(variableByRecipeId.get(recipe.recipeId()), coefficient);
+				}
+			}
+		}
+	}
+
 	private Map<UUID, Long> extractUsedRecipeValues(final Map<UUID, Variable> variableByRecipeId) {
 		final Map<UUID, Long> recipeValues = new LinkedHashMap<>();
 		for (final ConcreteRecipe recipe : recipes) {
@@ -426,6 +560,15 @@ public final class LinearSolver {
 			}
 		}
 		return count;
+	}
+
+	private long sumDeficitAmounts(final ResourcePool finalInventoryValues, final Set<MultiResourceKey> deficitResources) {
+		long total = 0L;
+		for (final MultiResourceKey resource : deficitResources) {
+			final long deficit = Math.max(0L, target.getAmount(resource) - finalInventoryValues.getAmount(resource));
+			total += deficit;
+		}
+		return total;
 	}
 
 	public record Result(Map<UUID, Long> recipeValues, ResourcePool finalInventoryValues) {

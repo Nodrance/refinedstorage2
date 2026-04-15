@@ -57,15 +57,13 @@ public final class CraftingSolver {
 			throwIfCancelled();
 
 			if (!canCraftTarget) {
-				DeficitAnalysisResult deficitAnalysis =
+				final DeficitAnalysisResult deficitAnalysis =
 					computeRequiredBaseItemsAndSolution(recipes, startingResources, target);
 				LOGGER.info(
 					"[LP] solve: target requires base items (resourceCount={}, totalAmount={})",
 					deficitAnalysis.requiredBaseItems(),
 					totalAmount(deficitAnalysis.requiredBaseItems())
 				);
-				throwIfCancelled();
-				deficitAnalysis = tryImproveDeficitsWithAllRecipes(recipes, startingResources, target, deficitAnalysis);
 				throwIfCancelled();
 				return buildRecipeApplicationPath(recipes, startingResources, deficitAnalysis);
 			}
@@ -176,6 +174,11 @@ public final class CraftingSolver {
 
 		final List<ConcreteRecipe> selectedRecipes =
 			RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(recipes);
+		LOGGER.info(
+			"[LP] computeRequiredBaseItemsAndSolution: selectedRecipes={} totalRecipes={}",
+			selectedRecipes.size(),
+			recipes.size()
+		);
 		final Set<MultiResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(selectedRecipes);
 		relevantResources.addAll(target.resourceKeys());
 
@@ -209,49 +212,82 @@ public final class CraftingSolver {
 			cancellationToken
 		).lexicographicMinimum();
 
-		final ResourcePool required = new ResourcePool();
-		for (final MultiResourceKey resource : deficitResources) {
-			throwIfCancelled();
-			final long finalInventory = result == null
-				? startingResources.getAmount(resource)
-				: result.finalInventoryValues().getAmount(resource);
-			final long needed = Math.max(0L, target.getAmount(resource) - finalInventory);
-			if (needed > 0) {
-				required.addAmount(resource, needed);
+		LinearSolver.Result selectedResult = result;
+		ResourcePool required = computeRequiredBaseItems(deficitResources, startingResources, target, selectedResult);
+		LOGGER.info(
+			"[LP] computeRequiredBaseItemsAndSolution: initialDeficitResources={} initialTotalDeficit={}",
+			required,
+			totalDeficit(required)
+		);
+
+		if (selectedResult != null && !required.isEmpty()) {
+			final LinearSolver.Result currentResult = selectedResult;
+			final List<ConcreteRecipe> usedRecipes = selectedRecipes.stream()
+				.filter(recipe -> currentResult.recipeValues().getOrDefault(recipe.recipeId(), 0L) > 0L)
+				.toList();
+			final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult = RecipeAnalyzer.detectRecipeCycles(usedRecipes);
+			if (cycleDetectionResult.cycles().isEmpty()) {
+				final Set<MultiResourceKey> optimizationRelevantResources = new LinkedHashSet<>(
+					RecipeAnalyzer.collectRelevantResourceKeys(recipes)
+				);
+				optimizationRelevantResources.addAll(target.resourceKeys());
+				LOGGER.info(
+					"[LP] computeRequiredBaseItemsAndSolution: attempting deficit optimization with full recipe set (selectedRecipes={}, fullRecipes={})",
+					selectedRecipes.size(),
+					recipes.size()
+				);
+				final Optional<LinearSolver.Result> optimizedResult = optimizeDeficitResources(
+					recipes,
+					optimizationRelevantResources,
+					startingResources,
+					target,
+					unconstrainedResources,
+					required,
+					currentResult
+				);
+				if (optimizedResult.isPresent()) {
+					selectedResult = optimizedResult.get();
+					required = computeRequiredBaseItems(deficitResources, startingResources, target, selectedResult);
+					LOGGER.info(
+						"[LP] computeRequiredBaseItemsAndSolution: optimizedDeficitResources={} optimizedTotalDeficit={}",
+						required,
+						totalDeficit(required)
+					);
+				}
+			} else {
+				LOGGER.info(
+					"[LP] computeRequiredBaseItemsAndSolution: skipped deficit optimization because cycles were detected"
+				);
 			}
 		}
 
-		return new DeficitAnalysisResult(required, Optional.ofNullable(result));
+		return new DeficitAnalysisResult(required, Optional.ofNullable(selectedResult));
 	}
 
-	private DeficitAnalysisResult tryImproveDeficitsWithAllRecipes(
-		final List<ConcreteRecipe> recipes,
+	private Optional<LinearSolver.Result> optimizeDeficitResources(
+		final List<ConcreteRecipe> optimizationRecipes,
+		final Set<MultiResourceKey> relevantResources,
 		final ResourcePool startingResources,
 		final ResourcePool target,
-		final DeficitAnalysisResult originalDeficitAnalysis
+		final Set<MultiResourceKey> unconstrainedResources,
+		final ResourcePool requiredBaseItems,
+		final LinearSolver.Result currentSolution
 	) {
 		throwIfCancelled();
-		if (recipes.isEmpty()) {
-			return originalDeficitAnalysis;
+		final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(requiredBaseItems.resourceKeys());
+		final long before = totalDeficit(requiredBaseItems);
+		if (deficitResources.isEmpty()) {
+			LOGGER.info(
+				"[LP] optimizeDeficitResources: totalDeficitBefore={} totalDeficitAfter={} deficitDecreased={}",
+				before,
+				before,
+				false
+			);
+			return Optional.of(currentSolution);
 		}
-		final RecipeAnalyzer.CycleDetectionResult cycleResult = RecipeAnalyzer.detectRecipeCycles(recipes);
-		if (!cycleResult.cycles().isEmpty()) {
-			LOGGER.info("[LP] tryImproveDeficitsWithAllRecipes: skipping, cycles detected in full recipe set");
-			return originalDeficitAnalysis;
-		}
 
-		final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
-			RecipeAnalyzer.collectRelevantResourceKeys(recipes)
-		);
-		relevantResources.addAll(target.resourceKeys());
-
-		final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(
-			RecipeAnalyzer.collectLeafResources(recipes)
-		);
-		final Set<MultiResourceKey> unconstrainedResources = new LinkedHashSet<>(deficitResources);
-
-		final LinearSolver.Result result = new LinearSolver(
-			recipes,
+		final LinearSolver.Result optimized = new LinearSolver(
+			optimizationRecipes,
 			relevantResources,
 			startingResources,
 			target,
@@ -259,51 +295,63 @@ public final class CraftingSolver {
 			Set.of(),
 			options,
 			cancellationToken
-		).lexicographicMinimum();
+		).minimizeTotalDeficitWithFloor(deficitResources, currentSolution.finalInventoryValues());
 
-		if (result == null) {
-			LOGGER.info("[LP] tryImproveDeficitsWithAllRecipes: no feasible solution with all recipes");
-			return originalDeficitAnalysis;
-		}
-
-		final ResourcePool allRecipesRequired = new ResourcePool();
-		for (final MultiResourceKey resource : deficitResources) {
-			throwIfCancelled();
-			final long finalInventory = result.finalInventoryValues().getAmount(resource);
-			final long needed = Math.max(0L, target.getAmount(resource) - finalInventory);
-			if (needed > 0) {
-				allRecipesRequired.addAmount(resource, needed);
-			}
-		}
-
-		final ResourcePool originalRequired = originalDeficitAnalysis.requiredBaseItems();
-		for (final Map.Entry<MultiResourceKey, Long> entry : allRecipesRequired) {
-			if (entry.getValue() > originalRequired.getAmount(entry.getKey())) {
-				LOGGER.info(
-					"[LP] tryImproveDeficitsWithAllRecipes: deficit increased for {}, keeping original",
-					entry.getKey()
-				);
-				return originalDeficitAnalysis;
-			}
-		}
-
-		final long originalTotal = totalAmount(originalRequired);
-		final long newTotal = totalAmount(allRecipesRequired);
-		if (newTotal >= originalTotal) {
+		if (optimized == null) {
 			LOGGER.info(
-				"[LP] tryImproveDeficitsWithAllRecipes: no improvement (originalTotal={}, newTotal={})",
-				originalTotal,
-				newTotal
+				"[LP] optimizeDeficitResources: totalDeficitBefore={} totalDeficitAfter={} deficitDecreased={} (no feasible optimized solution)",
+				before,
+				before,
+				false
 			);
-			return originalDeficitAnalysis;
+			return Optional.empty();
 		}
 
-		LOGGER.info(
-			"[LP] tryImproveDeficitsWithAllRecipes: improved deficits (originalTotal={}, newTotal={})",
-			originalTotal,
-			newTotal
+		final ResourcePool optimizedRequired = computeRequiredBaseItems(
+			deficitResources,
+			startingResources,
+			target,
+			optimized
 		);
-		return new DeficitAnalysisResult(allRecipesRequired, Optional.of(result));
+		final long after = totalDeficit(optimizedRequired);
+		final boolean decreased = after < before;
+		LOGGER.info(
+			"[LP] optimizeDeficitResources: deficitResourceCount={} totalDeficitBefore={} totalDeficitAfter={} deficitDecreased={}",
+			deficitResources.size(),
+			before,
+			after,
+			decreased
+		);
+		return Optional.of(optimized);
+	}
+
+	private static ResourcePool computeRequiredBaseItems(
+		final Set<MultiResourceKey> deficitResources,
+		final ResourcePool startingResources,
+		final ResourcePool target,
+		final LinearSolver.Result solution
+	) {
+		final ResourcePool required = new ResourcePool();
+		for (final MultiResourceKey resource : deficitResources) {
+			final long finalInventory = solution == null
+				? startingResources.getAmount(resource)
+				: solution.finalInventoryValues().getAmount(resource);
+			final long needed = Math.max(0L, target.getAmount(resource) - finalInventory);
+			if (needed > 0L) {
+				required.addAmount(resource, needed);
+			}
+		}
+		return required;
+	}
+
+	private static long totalDeficit(final ResourcePool requiredBaseItems) {
+		long total = 0L;
+		for (final Map.Entry<MultiResourceKey, Long> entry : requiredBaseItems) {
+			if (entry.getValue() > 0L) {
+				total += entry.getValue();
+			}
+		}
+		return total;
 	}
 
 	private Optional<RecipeApplicationPath> buildRecipeApplicationPath(
