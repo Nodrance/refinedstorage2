@@ -370,8 +370,8 @@ public final class CraftingSolver {
                 recipe.sourcePatternId(),
                 recipe.input(),
                 recipe.output(),
-                -recipe.priority(),
-                recipe.insertionOrder()
+                ~recipe.priority(),
+                -recipe.insertionOrder()
             ))
             .toList();
     }
