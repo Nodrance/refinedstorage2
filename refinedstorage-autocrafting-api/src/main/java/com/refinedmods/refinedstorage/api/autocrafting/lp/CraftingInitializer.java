@@ -56,9 +56,7 @@ public final class CraftingInitializer {
         ResourceAmount.validate(resource, amount);
         throwIfCancelled(cancellationToken);
 
-        final List<Pattern> allPatterns = patternRepository.getAll().stream()
-            .sorted(Comparator.comparing(Pattern::id))
-            .toList();
+        final List<Pattern> allPatterns = List.copyOf(patternRepository.getAll());
         final List<Pattern> relevantPatterns = RecipeSanitizer.collectRelevantPatterns(allPatterns, List.of(resource));
 
         final Set<ResourceKey> availableResources = new LinkedHashSet<>();
@@ -99,6 +97,7 @@ public final class CraftingInitializer {
 
         final ResourcePool target = ResourcePool.empty();
         final long targetAmount = relevantStartingResources.getAmount(targetResource) + amount;
+        validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
         target.setAmount(targetResource, targetAmount);
 
         final Initialization init = new Initialization(
@@ -152,6 +151,9 @@ public final class CraftingInitializer {
             final Optional<RecipeApplicationPath> result = solve(initialization, cancellationToken);
             LOGGER.info("[LP] Solve result: {}", result);
             return result;
+        } catch (final LpInputOverflowException e) {
+            LOGGER.info("[LP] solve(...) input overflow detected", e);
+            return Optional.empty();
         } catch (final java.util.concurrent.CancellationException e) {
             LOGGER.info("[LP] solve(...) cancelled before path construction");
             return Optional.empty();
@@ -203,6 +205,9 @@ public final class CraftingInitializer {
                 cancellationToken
             );
             return solve(initialization, cancellationToken);
+        } catch (final LpInputOverflowException e) {
+            LOGGER.info("[LP] solveToStepPlan(...) input overflow detected", e);
+            return Optional.empty();
         } catch (final java.util.concurrent.CancellationException e) {
             LOGGER.info("[LP] solveToStepPlan(...) cancelled before path construction");
             return Optional.empty();
@@ -238,13 +243,19 @@ public final class CraftingInitializer {
             return 0L;
         }
 
-        final Initialization maxCalculationInitialization = initialize(
-            rootStorage,
-            patternRepository,
-            resource,
-            1L,
-            cancellationToken
-        );
+        final Initialization maxCalculationInitialization;
+        try {
+            maxCalculationInitialization = initialize(
+                rootStorage,
+                patternRepository,
+                resource,
+                1L,
+                cancellationToken
+            );
+        } catch (final LpInputOverflowException e) {
+            LOGGER.info("[LP] findMaxCraftableAmount(...) input overflow detected", e);
+            return 0L;
+        }
         if (cancellationToken.isCancelled()) {
             return 0L;
         }
@@ -427,6 +438,13 @@ public final class CraftingInitializer {
                 .orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
             LOGGER.info("[LP] Preview result: {}", previewResult);
             return new SolveAndPreviewResult(initialization, recipeApplicationPath, previewResult);
+        } catch (final LpInputOverflowException e) {
+            LOGGER.info("[LP] solveAndCalculatePreview(...) input overflow detected", e);
+            return new SolveAndPreviewResult(
+                emptyInitialization(),
+                Optional.empty(),
+                new Preview(PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList())
+            );
         } catch (final java.util.concurrent.CancellationException e) {
             LOGGER.info("[LP] solveAndCalculatePreview(...) cancelled");
             return new SolveAndPreviewResult(
@@ -475,6 +493,13 @@ public final class CraftingInitializer {
             );
             LOGGER.info("[LP] Tree preview result: {}", previewResult);
             return new SolveAndTreePreviewResult(initialization, recipeApplicationPath, previewResult);
+        } catch (final LpInputOverflowException e) {
+            LOGGER.info("[LP] solveAndCalculateTreePreview(...) input overflow detected", e);
+            return new SolveAndTreePreviewResult(
+                emptyInitialization(),
+                Optional.empty(),
+                new TreePreview(PreviewType.OVERFLOW, null, Collections.emptyList())
+            );
         } catch (final java.util.concurrent.CancellationException e) {
             LOGGER.info("[LP] solveAndCalculateTreePreview(...) cancelled");
             return new SolveAndTreePreviewResult(
@@ -842,6 +867,60 @@ public final class CraftingInitializer {
         return ((numerator - 1) / denominator) + 1;
     }
 
+    private static void validateOverflowInputs(
+        final RootStorage rootStorage,
+        final Collection<Pattern> allPatterns,
+        final long requestedAmount,
+        final long targetAmount
+    ) {
+        final int recipeUpperBound = LinearSolver.Options.defaults().recipeUpperBound();
+
+        validateAmountWithinRecipeUpperBound(requestedAmount, recipeUpperBound, "requested amount");
+        validateAmountWithinRecipeUpperBound(targetAmount, recipeUpperBound, "target amount");
+        for (final ResourceAmount resourceAmount : rootStorage.getAll()) {
+            validateAmountWithinRecipeUpperBound(
+                resourceAmount.amount(),
+                recipeUpperBound,
+                "starting amount for " + resourceAmount.resource()
+            );
+        }
+        validatePatternAmountsWithinRecipeUpperBound(allPatterns, recipeUpperBound);
+    }
+
+    private static void validatePatternAmountsWithinRecipeUpperBound(
+        final Collection<Pattern> patterns,
+        final int recipeUpperBound
+    ) {
+        for (final Pattern pattern : patterns) {
+            for (final Ingredient ingredient : pattern.layout().ingredients()) {
+                validateAmountWithinRecipeUpperBound(
+                    ingredient.amount(),
+                    recipeUpperBound,
+                    "ingredient amount in pattern " + pattern.id()
+                );
+            }
+            for (final ResourceAmount output : pattern.layout().outputs()) {
+                validateAmountWithinRecipeUpperBound(
+                    output.amount(),
+                    recipeUpperBound,
+                    "output amount in pattern " + pattern.id()
+                );
+            }
+        }
+    }
+
+    private static void validateAmountWithinRecipeUpperBound(
+        final long amount,
+        final int recipeUpperBound,
+        final String context
+    ) {
+        if (amount > recipeUpperBound) {
+            throw new LpInputOverflowException(
+                context + " exceeds LP recipe upper bound " + recipeUpperBound + ": " + amount
+            );
+        }
+    }
+
     private static int clampToInt(final long value) {
         LOGGER.info("[LPT] Entering clampToInt()");
         if (value > Integer.MAX_VALUE) {
@@ -906,6 +985,16 @@ public final class CraftingInitializer {
         LOGGER.info("[LPT] Entering throwIfCancelled()");
         if (cancellationToken.isCancelled()) {
             throw new java.util.concurrent.CancellationException("LP crafting initializer cancelled");
+        }
+    }
+
+    private static final class LpInputOverflowException extends RuntimeException {
+        private LpInputOverflowException(final String message) {
+            super(message);
+        }
+
+        private LpInputOverflowException(final String message, final Throwable cause) {
+            super(message, cause);
         }
     }
 

@@ -164,13 +164,6 @@ class LpPreviewTest {
             .build());
     }
 
-    // Changed from legacy PreviewTest expectation:
-    //   Previous: single fixed expectation — SPRUCE branch always chosen:
-    //     addToCraft(CRAFTING_TABLE, 1), addToCraft(SPRUCE_PLANKS, 4), addMissing(SPRUCE_LOG, 1)
-    //   Changed to: accept either OAK or SPRUCE branch as equally valid outcomes.
-    //   Why: Both OAK_LOG→OAK_PLANKS and SPRUCE_LOG→SPRUCE_PLANKS patterns cost the same for 1 run;
-    //        the LP solver sees a symmetric problem and may choose either. The legacy solver always
-    //        picked SPRUCE due to its deterministic iteration order.
     @Test
     void shouldExhaustAllPossibleIngredientsWhenRunningOutInSingleRootPatternAndMultipleCraftableIngredients() {
         final RootStorage storage = storage();
@@ -182,18 +175,13 @@ class LpPreviewTest {
 
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 1, CancellationToken.NONE);
 
-        final Preview expectedOak = PreviewBuilder.create()
-            .addToCraft(CRAFTING_TABLE, 1)
-            .addToCraft(OAK_PLANKS, 4)
-            .addMissing(OAK_LOG, 1)
-            .build();
-        final Preview expectedSpruce = PreviewBuilder.create()
+        final Preview expected = PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 1)
             .addToCraft(SPRUCE_PLANKS, 4)
             .addMissing(SPRUCE_LOG, 1)
             .build();
 
-        assertPreviewMatchesAny(preview, expectedOak, expectedSpruce);
+        assertPreviewEquals(preview, expected);
     }
 
     @Test
@@ -212,11 +200,6 @@ class LpPreviewTest {
             .build());
     }
 
-    // Changed from traditional checklist:
-    // [x] The LP solver gives a correct answer
-    // [x] The LP solver always gives the same answer regardless of pattern order
-    // [X] The Traditional solver gives a different answer based on pattern order
-    // [x] Both solvers agree on whether this craft is possible with the given resources
     @Test
     void shouldNotCalculateForMultipleRootPatternsAndSingleIngredientAndAlmostAllResourcesAreAvailable() {
         final RootStorage storage = storage(new ResourceAmount(SPRUCE_PLANKS, 8));
@@ -226,19 +209,15 @@ class LpPreviewTest {
         );
 
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
+        // final int lpFlakeToggleUnused = 0; // LP_FLAKE_TOGGLE
 
-        final Preview expectedSplit = PreviewBuilder.create()
-            .addToCraft(CRAFTING_TABLE, 3)
-            .addAvailable(SPRUCE_PLANKS, 8)
-            .addMissing(OAK_PLANKS, 4)
-            .build();
         final Preview expectedRounded = PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 4)
             .addAvailable(SPRUCE_PLANKS, 8)
             .addMissing(SPRUCE_PLANKS, 8)
             .build();
 
-        assertPreviewMatchesAny(preview, expectedSplit, expectedRounded);
+        assertPreviewEquals(preview, expectedRounded);
     }
 
     @Test
@@ -262,11 +241,6 @@ class LpPreviewTest {
             .build());
     }
 
-    // Changed from traditional checklist:
-    // [x] The LP solver gives a correct answer
-    // [x] The LP solver always gives the same answer regardless of pattern order
-    // [X] The Traditional solver gives a different answer based on pattern order
-    // [x] Both solvers agree on whether this craft is possible with the given resources
     @Test
     void shouldNotCalculateForSingleRootPatternSingleChildPatternWSingleIngredientAndAlmostAllResourcesAreAvailable() {
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 2));
@@ -278,20 +252,14 @@ class LpPreviewTest {
 
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
 
-        final Preview expectedSplit = PreviewBuilder.create()
+        final Preview expected = PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 3)
             .addToCraft(OAK_PLANKS, 12)
             .addAvailable(OAK_LOG, 2)
             .addMissing(SPRUCE_LOG, 1)
             .build();
-        final Preview expectedAggregated = PreviewBuilder.create()
-            .addToCraft(CRAFTING_TABLE, 3)
-            .addToCraft(OAK_PLANKS, 12)
-            .addAvailable(OAK_LOG, 2)
-            .addMissing(OAK_LOG, 1)
-            .build();
 
-        assertPreviewEquals(preview, expectedSplit);
+        assertPreviewEquals(preview, expected);
     }
 
     @Test
@@ -485,20 +453,62 @@ class LpPreviewTest {
     void shouldDetectPatternCycles() {
         // Legacy preview surfaced CYCLE_DETECTED directly. LP preview does not expose the same top-level parity signal.
     }
+    */
 
     @Test
     void shouldDetectNumberOverflowInIngredient() {
-        // Overflow reporting is not exposed by LP preview with the same contract as the legacy calculator.
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern()
+                .ingredient(OAK_LOG, Long.MAX_VALUE)
+                .output(OAK_PLANKS, 1)
+                .build()
+        );
+
+        final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, 2, CancellationToken.NONE);
+
+        assertPreviewEquals(preview, new Preview(PreviewType.OVERFLOW, Collections.emptyList(),
+            Collections.emptyList()));
     }
 
     @Test
     void shouldDetectNumberOverflowWithRootPattern() {
-        // Overflow reporting is not exposed by LP preview with the same contract as the legacy calculator.
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
+        );
+
+        final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, Long.MAX_VALUE, CancellationToken.NONE);
+
+        assertPreviewEquals(preview, new Preview(PreviewType.OVERFLOW, Collections.emptyList(),
+            Collections.emptyList()));
     }
 
     @Test
     void shouldDetectNumberOverflowWithOutputOfChildPattern() {
-        // Overflow reporting is not exposed by LP preview with the same contract as the legacy calculator.
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .output(SIGN, Long.MAX_VALUE)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
+        );
+
+        final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 2, CancellationToken.NONE);
+
+        assertPreviewEquals(preview, new Preview(PreviewType.OVERFLOW, Collections.emptyList(),
+            Collections.emptyList()));
     }
-    */
 }
