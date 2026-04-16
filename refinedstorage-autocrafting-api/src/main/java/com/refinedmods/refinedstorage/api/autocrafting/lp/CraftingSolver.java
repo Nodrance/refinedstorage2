@@ -172,7 +172,9 @@ public final class CraftingSolver {
         throwIfCancelled();
         LOGGER.info("[LP] computeRequiredBaseItemsAndSolution: analyzing deficit for target {}", target);
 
-        // Old LP parity: when building deficit resources, invert recipe priority order.
+        // COMPATABILITY
+        // Comment this line if you want it to actually care about recipe priority
+        // instead of trying to match the traditional solver
         final List<ConcreteRecipe> deficitPriorityRecipes = reverseRecipePrioritiesForDeficitAnalysis(recipes);
 
         final List<ConcreteRecipe> selectedRecipes =

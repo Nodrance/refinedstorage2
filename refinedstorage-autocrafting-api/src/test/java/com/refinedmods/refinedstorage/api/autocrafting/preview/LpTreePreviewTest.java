@@ -47,7 +47,7 @@ class LpTreePreviewTest {
             CancellationToken.NONE);
 
         final IllegalArgumentException e = assertThrows(IllegalArgumentException.class, action);
-        assertThat(e).hasMessageContaining("Amount");
+        assertThat(e).hasMessage("Requested amount must be greater than 0");
     }
 
     @ParameterizedTest

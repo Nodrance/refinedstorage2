@@ -29,14 +29,23 @@ public final class PreviewCalculator {
     }
 
     public static Preview calculatePreview(final RecipeApplicationPath path) {
-        return calculatePreview(path, CancellationToken.NONE);
+        return calculatePreview(path, Set.of(), CancellationToken.NONE);
     }
 
     public static Preview calculatePreview(
         final RecipeApplicationPath path,
         final CancellationToken cancellationToken
     ) {
+        return calculatePreview(path, Set.of(), cancellationToken);
+    }
+
+    public static Preview calculatePreview(
+        final RecipeApplicationPath path,
+        final Set<ResourceKey> targetResources,
+        final CancellationToken cancellationToken
+    ) {
         Objects.requireNonNull(path, "path cannot be null");
+        Objects.requireNonNull(targetResources, "targetResources cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
@@ -81,6 +90,10 @@ public final class PreviewCalculator {
                 byResource.put(resource, new Amounts(availableAmount, missingAmount, craftedAmount));
             }
         }
+
+        // COMPATABILITY
+        // Comment this line to display byproducts as to_craft instead of hiding them
+        removeCraftedButUnusedRecipeResources(path.steps(), byResource, targetResources, cancellationToken);
 
         final List<ResourceKey> orderedResources = orderResources(path.steps(), byResource.keySet(), cancellationToken);
         final List<PreviewItem> items = new ArrayList<>(orderedResources.size());
@@ -243,6 +256,37 @@ public final class PreviewCalculator {
             total += value;
         }
         return total;
+    }
+
+    private static void removeCraftedButUnusedRecipeResources(
+        final List<RecipeApplicationStep> steps,
+        final Map<ResourceKey, Amounts> byResource,
+        final Set<ResourceKey> targetResources,
+        final CancellationToken cancellationToken
+    ) {
+        final Set<ResourceKey> resourcesUsedInRecipes = new LinkedHashSet<>();
+        for (final RecipeApplicationStep step : steps) {
+            throwIfCancelled(cancellationToken);
+            if (step.timesApplied() <= 0L) {
+                continue;
+            }
+            for (final Map.Entry<MultiResourceKey, Long> input : step.recipe().input()) {
+                throwIfCancelled(cancellationToken);
+                if (input.getValue() > 0L) {
+                    resourcesUsedInRecipes.add(toPreviewResourceKey(input.getKey()));
+                }
+            }
+        }
+
+        byResource.entrySet().removeIf(entry -> {
+            throwIfCancelled(cancellationToken);
+            final Amounts amounts = entry.getValue();
+            return amounts.available() == 0L
+                && amounts.missing() == 0L
+                && amounts.toCraft() > 0L
+                && !targetResources.contains(entry.getKey())
+                && !resourcesUsedInRecipes.contains(entry.getKey());
+        });
     }
 
     private static long sumPreviewToCraft(final List<PreviewItem> items) {

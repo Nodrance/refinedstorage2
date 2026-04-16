@@ -9,6 +9,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewItem;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreviewNode;
+import com.refinedmods.refinedstorage.api.core.CoreValidations;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
@@ -53,11 +54,14 @@ public final class CraftingInitializer {
         Objects.requireNonNull(patternRepository, "patternRepository cannot be null");
         Objects.requireNonNull(resource, "resource cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
-        ResourceAmount.validate(resource, amount);
+        CoreValidations.validateLargerThanZero(amount, "Requested amount must be greater than 0");
         throwIfCancelled(cancellationToken);
 
         final List<Pattern> allPatterns = List.copyOf(patternRepository.getAll());
         final List<Pattern> relevantPatterns = RecipeSanitizer.collectRelevantPatterns(allPatterns, List.of(resource));
+        if (relevantPatterns.isEmpty()) {
+            throw new IllegalStateException("No pattern found for " + resource);
+        }
 
         final Set<ResourceKey> availableResources = new LinkedHashSet<>();
         for (final ResourceAmount resourceAmount : rootStorage.getAll()) {
@@ -97,8 +101,13 @@ public final class CraftingInitializer {
 
         final ResourcePool target = ResourcePool.empty();
         final long targetAmount = relevantStartingResources.getAmount(targetResource) + amount;
-        validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
         target.setAmount(targetResource, targetAmount);
+
+        // COMPATABILITY
+		// Comment this line to speed things up a bit at the cost of it just normally failing to solve 
+		// instead of failing to solve with a fancy "overflow error" screen
+
+        validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
 
         final Initialization init = new Initialization(
             concreteRecipes,
@@ -434,7 +443,7 @@ public final class CraftingInitializer {
             final Optional<RecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
             LOGGER.info("[LP] Solve result for preview: {}", recipeApplicationPath);
             final Preview previewResult = recipeApplicationPath
-                .map(path -> PreviewCalculator.calculatePreview(path, cancellationToken))
+                .map(path -> PreviewCalculator.calculatePreview(path, Set.of(resource), cancellationToken))
                 .orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
             LOGGER.info("[LP] Preview result: {}", previewResult);
             return new SolveAndPreviewResult(initialization, recipeApplicationPath, previewResult);

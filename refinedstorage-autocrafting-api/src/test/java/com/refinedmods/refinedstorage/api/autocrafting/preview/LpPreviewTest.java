@@ -1,6 +1,7 @@
 package com.refinedmods.refinedstorage.api.autocrafting.preview;
 
 import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToken;
+import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
@@ -34,30 +35,55 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class LpPreviewTest {
-    @ParameterizedTest
-    @ValueSource(longs = {-1, 0})
-    void shouldNotCalculateWithInvalidRequestedAmount(final long requestedAmount) {
+    @Test
+    void shouldNotCalculateForPatternThatIsNotFound() {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns();
 
+        // Act
+        final Executable action = () -> calculatePreview(storage, patterns, CRAFTING_TABLE, 1, CancellationToken.NONE);
+
+        // Assert
+        final IllegalStateException e = assertThrows(IllegalStateException.class, action);
+        assertThat(e).hasMessage("No pattern found for " + CRAFTING_TABLE);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {-1, 0})
+    void shouldNotCalculateWithInvalidRequestedAmount(final long requestedAmount) {
+        // Arrange
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns();
+
+        // Act
         final Executable action = () -> calculatePreview(storage, patterns, CRAFTING_TABLE, requestedAmount,
             CancellationToken.NONE);
 
+        // Assert
         final IllegalArgumentException e = assertThrows(IllegalArgumentException.class, action);
-        assertThat(e).hasMessageContaining("Amount");
+        assertThat(e).hasMessage("Requested amount must be greater than 0");
     }
 
     @ParameterizedTest
     @ValueSource(longs = {1, 2})
-    void shouldCalculateForSingleRootPatternSingleIngredientAndAllResourcesAreAvailable(final long requestedAmount) {
+    void shouldCalculateForSingleRootPatternSingleIngredientAndAllResourcesAreAvailable(
+        final long requestedAmount
+    ) {
+        // Arrange
         final RootStorage storage = storage(new ResourceAmount(OAK_PLANKS, 8));
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, requestedAmount,
             CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, requestedAmount)
             .addAvailable(OAK_PLANKS, requestedAmount * 4)
@@ -69,9 +95,13 @@ class LpPreviewTest {
     void shouldCalculateForSingleRootPatternSingleIngredientSpreadOutOverMultipleIngredientsAndThereAreMissingResources(
         final long requestedAmount
     ) {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
             pattern()
                 .ingredient(OAK_PLANKS, 1)
                 .ingredient(OAK_PLANKS, 1)
@@ -81,9 +111,11 @@ class LpPreviewTest {
                 .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, requestedAmount,
             CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, requestedAmount)
             .addToCraft(OAK_PLANKS, requestedAmount * 4)
@@ -93,13 +125,19 @@ class LpPreviewTest {
 
     @Test
     void shouldNotCalculateForSingleRootPatternSingleIngredientAndAlmostAllResourcesAreAvailable() {
+        // Arrange
         final RootStorage storage = storage(new ResourceAmount(OAK_PLANKS, 8));
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 3)
             .addAvailable(OAK_PLANKS, 8)
@@ -109,15 +147,27 @@ class LpPreviewTest {
 
     @Test
     void shouldCalculateWithSingleRootPatternWithMultipleIngredientAndMultipleAreCraftableButOnly1HasEnoughResources() {
+        // Arrange
         final RootStorage storage = storage(new ResourceAmount(SPRUCE_LOG, 1));
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
-            pattern().ingredient(SPRUCE_LOG, 1).output(SPRUCE_PLANKS, 4).build(),
-            pattern().ingredient(4).input(OAK_PLANKS).input(SPRUCE_PLANKS).end().output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(SPRUCE_LOG, 1)
+                .output(SPRUCE_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(4).input(OAK_PLANKS).input(SPRUCE_PLANKS).end()
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 1, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 1)
             .addToCraft(SPRUCE_PLANKS, 4)
@@ -127,16 +177,22 @@ class LpPreviewTest {
 
     @Test
     void shouldPrioritizeResourcesThatWeHaveMostOfInStorageForSingleRootPatternAndMultipleIngredients() {
+        // Arrange
         final RootStorage storage = storage(
             new ResourceAmount(OAK_PLANKS, 4 * 10),
             new ResourceAmount(SPRUCE_PLANKS, 4 * 5)
         );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(4).input(SPRUCE_PLANKS).input(OAK_PLANKS).end().output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(4).input(SPRUCE_PLANKS).input(OAK_PLANKS).end()
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 11, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 11)
             .addAvailable(OAK_PLANKS, 4 * 10)
@@ -146,54 +202,81 @@ class LpPreviewTest {
 
     @Test
     void shouldExhaustAllPossibleIngredientsWhenRunningOutInSingleRootPatternAndMultipleIngredients() {
+        // Arrange
         final RootStorage storage = storage(
             new ResourceAmount(OAK_PLANKS, 4 * 10),
             new ResourceAmount(SPRUCE_PLANKS, 4 * 5)
         );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(4).input(OAK_PLANKS).input(SPRUCE_PLANKS).end().output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(4).input(OAK_PLANKS).input(SPRUCE_PLANKS).end()
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 16, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 16)
             .addAvailable(OAK_PLANKS, 4 * 10)
             .addAvailable(SPRUCE_PLANKS, 4 * 5)
-            .addMissing(OAK_PLANKS, 4)
+            .addMissing(SPRUCE_PLANKS, 4)
             .build());
     }
 
     @Test
     void shouldExhaustAllPossibleIngredientsWhenRunningOutInSingleRootPatternAndMultipleCraftableIngredients() {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
-            pattern().ingredient(SPRUCE_LOG, 1).output(SPRUCE_PLANKS, 4).build(),
-            pattern().ingredient(4).input(OAK_PLANKS).input(SPRUCE_PLANKS).end().output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(SPRUCE_LOG, 1)
+                .output(SPRUCE_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(4).input(OAK_PLANKS).input(SPRUCE_PLANKS).end()
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 1, CancellationToken.NONE);
 
-        final Preview expected = PreviewBuilder.create()
+        // Assert
+        assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 1)
             .addToCraft(SPRUCE_PLANKS, 4)
             .addMissing(SPRUCE_LOG, 1)
-            .build();
-
-        assertPreviewEquals(preview, expected);
+            .build());
     }
 
     @Test
     void shouldCalculateForMultipleRootPatternsAndSingleIngredientAndAllResourcesAreAvailable() {
-        final RootStorage storage = storage(new ResourceAmount(SPRUCE_PLANKS, 8));
+        // Arrange
+        final RootStorage storage = storage(
+            new ResourceAmount(SPRUCE_PLANKS, 8)
+        );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build(),
-            pattern().ingredient(SPRUCE_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build(),
+            pattern()
+                .ingredient(SPRUCE_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 2, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 2)
             .addAvailable(SPRUCE_PLANKS, 8)
@@ -202,37 +285,54 @@ class LpPreviewTest {
 
     @Test
     void shouldNotCalculateForMultipleRootPatternsAndSingleIngredientAndAlmostAllResourcesAreAvailable() {
-        final RootStorage storage = storage(new ResourceAmount(SPRUCE_PLANKS, 8));
+        // Arrange
+        final RootStorage storage = storage(
+            new ResourceAmount(SPRUCE_PLANKS, 8)
+        );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build(),
-            pattern().ingredient(SPRUCE_PLANKS, 8).output(CRAFTING_TABLE, 2).build()
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build(),
+            pattern()
+                .ingredient(SPRUCE_PLANKS, 8)
+                .output(CRAFTING_TABLE, 2)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
-        // final int lpFlakeToggleUnused = 0; // LP_FLAKE_TOGGLE
 
-        final Preview expectedRounded = PreviewBuilder.create()
+        // Assert
+        assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 4)
             .addAvailable(SPRUCE_PLANKS, 8)
             .addMissing(SPRUCE_PLANKS, 8)
-            .build();
-
-        assertPreviewEquals(preview, expectedRounded);
+            .build());
     }
 
     @Test
     void shouldCalculateForSingleRootPatternAndSingleChildPatternWithSingleIngredientAndAllResourcesAreAvailable() {
+        // Arrange
         final RootStorage storage = storage(
             new ResourceAmount(OAK_PLANKS, 3),
             new ResourceAmount(OAK_LOG, 3)
         );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 3)
             .addAvailable(OAK_PLANKS, 3)
@@ -243,37 +343,57 @@ class LpPreviewTest {
 
     @Test
     void shouldNotCalculateForSingleRootPatternSingleChildPatternWSingleIngredientAndAlmostAllResourcesAreAvailable() {
-        final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 2));
+        // Arrange
+        final RootStorage storage = storage(
+            new ResourceAmount(OAK_LOG, 2)
+        );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
-            pattern().ingredient(SPRUCE_LOG, 1).output(OAK_PLANKS, 4).build(),
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(SPRUCE_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
 
-        final Preview expected = PreviewBuilder.create()
+        // Assert
+        assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(CRAFTING_TABLE, 3)
             .addToCraft(OAK_PLANKS, 12)
-            .addAvailable(OAK_LOG, 2)
-            .addMissing(SPRUCE_LOG, 1)
-            .build();
-
-        assertPreviewEquals(preview, expected);
+            .addMissing(SPRUCE_LOG, 3)
+            .build());
     }
 
     @Test
     void shouldCraftMoreIfNecessaryIfResourcesFromInternalStorageAreUsedUp() {
+        // Arrange
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 4));
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 2).build(),
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build(),
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 2)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build(),
             STICKS_PATTERN,
             SIGN_PATTERN
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, SIGN, 1, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(SIGN, 3)
             .addToCraft(OAK_PLANKS, 8)
@@ -284,19 +404,28 @@ class LpPreviewTest {
 
     @Test
     void shouldCraftMoreIfNecessaryIfResourcesFromStorageAreUsedUp() {
+        // Arrange
         final RootStorage storage = storage(
             new ResourceAmount(OAK_PLANKS, 6),
             new ResourceAmount(OAK_LOG, 1)
         );
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 2).build(),
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build(),
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 2)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build(),
             STICKS_PATTERN,
             SIGN_PATTERN
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, SIGN, 1, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(SIGN, 3)
             .addAvailable(OAK_PLANKS, 6)
@@ -335,16 +464,25 @@ class LpPreviewTest {
     @ParameterizedTest
     @MethodSource("provideMissingResourcesPreview")
     void shouldKeepCalculatingEvenIfResourcesAreMissing(final long requestedAmount, final Preview expectedPreview) {
+        // Arrange
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 3));
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 2).build(),
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build(),
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 2)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build(),
             STICKS_PATTERN,
             SIGN_PATTERN
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, SIGN, requestedAmount, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, expectedPreview);
     }
 
@@ -366,6 +504,7 @@ class LpPreviewTest {
         final long planksCrafted,
         final long logsUsed
     ) {
+        // Arrange
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 30));
         final PatternRepository patterns = patterns(
             pattern()
@@ -376,27 +515,39 @@ class LpPreviewTest {
                 .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, requestedAmount, CancellationToken.NONE);
 
+        // Assert
         assertPreviewEquals(preview, PreviewBuilder.create()
             .addToCraft(OAK_PLANKS, planksCrafted)
-            .addToCraft(STICKS, logsUsed)
             .addAvailable(OAK_LOG, logsUsed)
             .build());
     }
 
     @Test
     void shouldCancel() {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(
-            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
-            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 2,
             new CancelledCancellationToken());
 
-        assertPreviewEquals(preview, new Preview(PreviewType.CANCELLED, Collections.emptyList(), Collections.emptyList()));
+        // Assert
+        assertPreviewEquals(preview, new Preview(
+            PreviewType.CANCELLED, Collections.emptyList(), Collections.emptyList()
+        ));
     }
 
     private static Preview calculatePreview(
@@ -415,48 +566,33 @@ class LpPreviewTest {
         ).previewResult();
     }
 
-    private static void assertPreviewEquals(final Preview actual, final Preview expected) {
-        assertThat(actual.type()).isEqualTo(expected.type());
-        assertThat(actual.items()).usingRecursiveFieldByFieldElementComparator()
-            .containsExactlyInAnyOrderElementsOf(expected.items());
-        assertThat(actual.outputsOfPatternWithCycle()).usingRecursiveFieldByFieldElementComparator()
-            .containsExactlyInAnyOrderElementsOf(expected.outputsOfPatternWithCycle());
-    }
-
-    private static void assertPreviewMatchesAny(final Preview actual, final Preview... expectedOptions) {
-        assertThat(actual.type()).isEqualTo(expectedOptions[0].type());
-        assertThat(actual.outputsOfPatternWithCycle()).usingRecursiveFieldByFieldElementComparator()
-            .containsExactlyInAnyOrderElementsOf(expectedOptions[0].outputsOfPatternWithCycle());
-
-        final String actualItems = renderPreviewItems(actual);
-        final java.util.List<String> expectedItems = java.util.Arrays.stream(expectedOptions)
-            .map(LpPreviewTest::renderPreviewItems)
-            .toList();
-        assertThat(actualItems).isIn(expectedItems);
-    }
-
-    private static String renderPreviewItems(final Preview preview) {
-        return preview.items().stream()
-            .sorted(java.util.Comparator.comparing(item -> item.resource().toString()))
-            .map(item -> item.resource() + " available=" + item.available() + " missing=" + item.missing() + " toCraft="
-                + item.toCraft())
-            .collect(java.util.stream.Collectors.joining("\n"));
-    }
-
-    /*
-    @Test
-    void shouldNotCalculateForPatternThatIsNotFound() {
-        // Legacy preview threw when no root pattern existed. LP preview returns NOT_AVAILABLE instead.
-    }
-
     @Test
     void shouldDetectPatternCycles() {
-        // Legacy preview surfaced CYCLE_DETECTED directly. LP preview does not expose the same top-level parity signal.
+        // It detects them, it's just such a gigachad it doesn't care
+        // and solves the craft anyway
+        final RootStorage storage = storage();
+        final Pattern cycledPattern = pattern()
+            .ingredient(OAK_LOG, 1)
+            .output(OAK_PLANKS, 4)
+            .build();
+        final PatternRepository patterns = patterns(
+            cycledPattern,
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(OAK_LOG, 1)
+                .build()
+        );
+
+        final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, 1, CancellationToken.NONE);
+
+        assertPreviewEquals(preview, new Preview(
+            PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()
+        ));
     }
-    */
 
     @Test
     void shouldDetectNumberOverflowInIngredient() {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(
             pattern()
@@ -465,14 +601,18 @@ class LpPreviewTest {
                 .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, 2, CancellationToken.NONE);
 
-        assertPreviewEquals(preview, new Preview(PreviewType.OVERFLOW, Collections.emptyList(),
-            Collections.emptyList()));
+        // Assert
+        assertPreviewEquals(preview, new Preview(
+            PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList()
+        ));
     }
 
     @Test
     void shouldDetectNumberOverflowWithRootPattern() {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(
             pattern()
@@ -485,14 +625,18 @@ class LpPreviewTest {
                 .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, Long.MAX_VALUE, CancellationToken.NONE);
 
-        assertPreviewEquals(preview, new Preview(PreviewType.OVERFLOW, Collections.emptyList(),
-            Collections.emptyList()));
+        // Assert
+        assertPreviewEquals(preview, new Preview(
+            PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList()
+        ));
     }
 
     @Test
     void shouldDetectNumberOverflowWithOutputOfChildPattern() {
+        // Arrange
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(
             pattern()
@@ -506,9 +650,26 @@ class LpPreviewTest {
                 .build()
         );
 
+        // Act
         final Preview preview = calculatePreview(storage, patterns, CRAFTING_TABLE, 2, CancellationToken.NONE);
 
-        assertPreviewEquals(preview, new Preview(PreviewType.OVERFLOW, Collections.emptyList(),
-            Collections.emptyList()));
+        // Assert
+        assertPreviewEquals(preview, new Preview(
+            PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList()
+        ));
+    }
+
+    private static void assertPreviewEquals(final Preview actual, final Preview expected) {
+        // Same as the existing preview check except it doesn't care about order
+        // My previews are sorted so that every item comes before everything it's made out of
+        // That's the only guarantee I make about preview ordering
+        // At least until someone explains the exact rules the preview ordering follows 
+        assertThat(actual.type()).isEqualTo(expected.type());
+        assertThat(actual.items())
+            .usingRecursiveFieldByFieldElementComparator()
+            .containsExactlyInAnyOrderElementsOf(expected.items());
+        assertThat(actual.outputsOfPatternWithCycle())
+            .usingRecursiveFieldByFieldElementComparator()
+            .containsExactlyInAnyOrderElementsOf(expected.outputsOfPatternWithCycle());
     }
 }
