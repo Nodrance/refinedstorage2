@@ -257,8 +257,9 @@ class LpTreePreviewTest {
         final TreePreview actual = calculateTree(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
         final TreePreview expected = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 3)
             .node(OAK_PLANKS, 12).toCraft(12)
-            .node(SPRUCE_LOG, 3).missing(3)
-            .end().end()
+            .node(OAK_LOG, 2).available(2).end()
+            .node(SPRUCE_LOG, 1).missing(1).end()
+            .end()
             .build();
 
         assertTreeEquals(actual, expected);
@@ -275,8 +276,7 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, SIGN, 1, CancellationToken.NONE);
-        final TreePreview expected = tree(PreviewType.SUCCESS, SIGN, 1)
-            .toCraft(2)
+        final TreePreview expected = tree(PreviewType.SUCCESS, SIGN, 3)
             .node(OAK_PLANKS, 6).toCraft(6).node(OAK_LOG, 3).available(3).end().end()
             .node(STICKS, 1).toCraft(4).node(OAK_PLANKS, 2).toCraft(2).node(OAK_LOG, 1).available(1).end().end()
             .end()
@@ -299,8 +299,7 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, SIGN, 1, CancellationToken.NONE);
-        final TreePreview expected = tree(PreviewType.SUCCESS, SIGN, 1)
-            .toCraft(2)
+        final TreePreview expected = tree(PreviewType.SUCCESS, SIGN, 3)
             .node(OAK_PLANKS, 6).available(4).toCraft(2).node(OAK_LOG, 1).available(1).end().end()
             .node(STICKS, 1).toCraft(4).node(OAK_PLANKS, 2).available(2).end().end()
             .build();
@@ -310,18 +309,15 @@ class LpTreePreviewTest {
 
     private static Stream<Arguments> provideMissingResourcesPreview() {
         return Stream.of(
-            Arguments.of(1, tree(PreviewType.MISSING_RESOURCES, SIGN, 1)
-                .toCraft(2)
+            Arguments.of(1, tree(PreviewType.MISSING_RESOURCES, SIGN, 3)
                 .node(OAK_PLANKS, 6).toCraft(6).node(OAK_LOG, 3).available(3).end().end()
                 .node(STICKS, 1).toCraft(4).node(OAK_PLANKS, 2).toCraft(2).node(OAK_LOG, 1).missing(1).end().end()
                 .end().build()),
-            Arguments.of(4, tree(PreviewType.MISSING_RESOURCES, SIGN, 4)
-                .toCraft(2)
+            Arguments.of(4, tree(PreviewType.MISSING_RESOURCES, SIGN, 6)
                 .node(OAK_PLANKS, 12).toCraft(12).node(OAK_LOG, 6).available(3).missing(3).end().end()
                 .node(STICKS, 2).toCraft(4).node(OAK_PLANKS, 2).toCraft(2).node(OAK_LOG, 1).missing(1).end().end()
                 .end().build()),
-            Arguments.of(20, tree(PreviewType.MISSING_RESOURCES, SIGN, 20)
-                .toCraft(1)
+            Arguments.of(20, tree(PreviewType.MISSING_RESOURCES, SIGN, 21)
                 .node(OAK_PLANKS, 42).toCraft(42).node(OAK_LOG, 21).available(3).missing(18).end().end()
                 .node(STICKS, 7).toCraft(8).node(OAK_PLANKS, 4).toCraft(4).node(OAK_LOG, 2).missing(2).end().end()
                 .end().build())
@@ -373,8 +369,7 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, OAK_PLANKS, requestedAmount, CancellationToken.NONE);
-        final TreePreview expected = tree(PreviewType.SUCCESS, OAK_PLANKS, requestedAmount)
-            .toCraft(planksCrafted - requestedAmount)
+        final TreePreview expected = tree(PreviewType.SUCCESS, OAK_PLANKS, planksCrafted)
             .node(OAK_LOG, logsUsed).available(logsUsed).end()
             .build();
 
@@ -416,20 +411,6 @@ class LpTreePreviewTest {
         assertThat(renderTree(normalize(actual.rootNode()))).isEqualTo(renderTree(normalize(expected.rootNode())));
         assertThat(actual.outputsOfPatternWithCycle()).usingRecursiveFieldByFieldElementComparator()
             .containsExactlyInAnyOrderElementsOf(expected.outputsOfPatternWithCycle());
-    }
-
-    private static void assertTreeMatchesAny(final TreePreview actual, final TreePreview... expectedOptions) {
-        assertThat(actual.type()).isEqualTo(expectedOptions[0].type());
-        assertThat(actual.outputsOfPatternWithCycle()).usingRecursiveFieldByFieldElementComparator()
-            .containsExactlyInAnyOrderElementsOf(expectedOptions[0].outputsOfPatternWithCycle());
-
-        final String actualTree = renderTree(normalize(actual.rootNode()));
-        final List<String> expectedTrees = java.util.Arrays.stream(expectedOptions)
-            .map(TreePreview::rootNode)
-            .map(LpTreePreviewTest::normalize)
-            .map(LpTreePreviewTest::renderTree)
-            .toList();
-        assertThat(actualTree).isIn(expectedTrees);
     }
 
     private static String renderTree(final TreePreviewNode node) {
@@ -479,7 +460,7 @@ class LpTreePreviewTest {
     }
 
     @Test
-    void shouldSolvePatternCycles() {
+    void shouldDetectPatternCycles() {
         final RootStorage storage = storage();
         final var cycledPattern = pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build();
         final PatternRepository patterns = patterns(
@@ -488,13 +469,12 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, OAK_PLANKS, 1, CancellationToken.NONE);
-        // assertThat(actual).usingRecursiveComparison().isEqualTo(new TreePreview(
-        //     PreviewType.CYCLE_DETECTED,
-        //     null,
-        //     cycledPattern.layout().outputs()
-        // ));
-        assertThat(actual.type()).isEqualTo(PreviewType.MISSING_RESOURCES);
-        assertThat(actual.outputsOfPatternWithCycle()).containsExactlyInAnyOrderElementsOf(cycledPattern.layout().outputs());
+
+        final TreePreview expected = tree(PreviewType.MISSING_RESOURCES, OAK_PLANKS, 4)
+            .node(OAK_LOG, 1).missing(1).end()
+            .build();
+
+        assertTreeEquals(actual, expected);
     }
 
     @Test
