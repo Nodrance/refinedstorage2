@@ -179,20 +179,32 @@ public final class CraftingSolver {
 
         final List<ConcreteRecipe> selectedRecipes =
             RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(deficitPriorityRecipes);
+        final RecipeAnalyzer.SnippedRecipes snippedRecipes = RecipeAnalyzer.snipLoopsOnTargetBranches(
+            selectedRecipes,
+            target
+        );
+        final List<ConcreteRecipe> deficitRecipes = snippedRecipes.unsnipped();
         LOGGER.info(
-            "[LP] computeRequiredBaseItemsAndSolution: selectedRecipes={} totalRecipes={}",
+            "[LP] computeRequiredBaseItemsAndSolution: selectedRecipes={} snippedRecipes={} totalRecipes={}",
             selectedRecipes.size(),
+            snippedRecipes.snipped().size(),
             recipes.size()
         );
-        final Set<MultiResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(selectedRecipes);
+        final Set<MultiResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(deficitRecipes);
         relevantResources.addAll(target.resourceKeys());
 
         final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(
-            RecipeAnalyzer.collectLeafResources(selectedRecipes)
+            RecipeAnalyzer.collectLeafResources(deficitRecipes)
         );
+        deficitResources.addAll(
+            RecipeAnalyzer.collectLoopEntryDeficitResourcesOnTargetBranches(selectedRecipes, target)
+        );
+        if (deficitResources.isEmpty()) {
+            deficitResources.addAll(target.resourceKeys());
+        }
         LOGGER.info("[LP] computeRequiredBaseItemsAndSolution: deficit resources={}", deficitResources);
 
-        if (selectedRecipes.isEmpty()) {
+        if (deficitRecipes.isEmpty()) {
             final ResourcePool required = new ResourcePool();
             for (final MultiResourceKey resource : deficitResources) {
                 throwIfCancelled();
@@ -207,7 +219,7 @@ public final class CraftingSolver {
         final Set<MultiResourceKey> unconstrainedResources = new LinkedHashSet<>(deficitResources);
 
         final LinearSolver.Result result = new LinearSolver(
-            selectedRecipes,
+            deficitRecipes,
             relevantResources,
             startingResources,
             target,
@@ -227,7 +239,7 @@ public final class CraftingSolver {
 
         if (selectedResult != null && !required.isEmpty()) {
             final LinearSolver.Result currentResult = selectedResult;
-            final List<ConcreteRecipe> usedRecipes = selectedRecipes.stream()
+            final List<ConcreteRecipe> usedRecipes = deficitRecipes.stream()
                 .filter(recipe -> currentResult.recipeValues().getOrDefault(recipe.recipeId(), 0L) > 0L)
                 .toList();
             final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
@@ -240,7 +252,7 @@ public final class CraftingSolver {
                 LOGGER.info(
                     "[LP] computeRequiredBaseItemsAndSolution: attempting deficit optimization "
                         + "with full recipe set (selectedRecipes={}, fullRecipes={})",
-                    selectedRecipes.size(),
+                    deficitRecipes.size(),
                     recipes.size()
                 );
                 final Optional<LinearSolver.Result> optimizedResult = optimizeDeficitResources(
@@ -384,7 +396,21 @@ public final class CraftingSolver {
         final DeficitAnalysisResult deficitAnalysis
     ) {
         if (deficitAnalysis.solution().isEmpty()) {
-            return Optional.empty();
+            if (deficitAnalysis.requiredBaseItems().isEmpty()) {
+                return Optional.empty();
+            }
+
+            final RecipeApplicationSet applicationSet = new RecipeApplicationSet(
+                recipes,
+                Map.of(),
+                ResourcePool.empty(),
+                startingResources.copy(),
+                deficitAnalysis.requiredBaseItems(),
+                RecipeAnalyzer.collectRelevantResourceKeys(recipes).stream()
+                    .sorted(Comparator.comparing(Object::toString))
+                    .toList()
+            );
+            return Optional.of(new RecipeApplicationPath(applicationSet, List.of()));
         }
 
         final LinearSolver.Result solution = deficitAnalysis.solution().get();

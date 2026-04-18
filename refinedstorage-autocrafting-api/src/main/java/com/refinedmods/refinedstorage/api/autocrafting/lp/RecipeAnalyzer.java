@@ -161,6 +161,23 @@ public class RecipeAnalyzer {
         return selected;
     }
 
+    public static Set<MultiResourceKey> collectLoopEntryDeficitResourcesOnTargetBranches(
+        final List<ConcreteRecipe> recipes,
+        final ResourcePool target
+    ) {
+        Objects.requireNonNull(recipes, "recipes cannot be null");
+        Objects.requireNonNull(target, "target cannot be null");
+
+        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
+        final Set<MultiResourceKey> loopEntryDeficitResources = new LinkedHashSet<>();
+        for (final MultiResourceKey targetResource : target.resourceKeys()) {
+            final Set<MultiResourceKey> pathResources = new LinkedHashSet<>();
+            pathResources.add(targetResource);
+            walkLoopEntryDeficits(targetResource, outputToRecipes, pathResources, loopEntryDeficitResources);
+        }
+        return loopEntryDeficitResources;
+    }
+
     private static TraversalState initializeTraversalState(final ResourcePool target) {
         final Map<MultiResourceKey, PriorityKey> bestResourcePriorities = new LinkedHashMap<>();
         final Map<UUID, PriorityKey> bestRecipePriorities = new LinkedHashMap<>();
@@ -354,6 +371,29 @@ public class RecipeAnalyzer {
                 }
                 pathResources.add(inputResource);
                 walkLoopClosingRecipes(inputResource, outputToRecipes, pathResources, loopClosingRecipeIds);
+                pathResources.remove(inputResource);
+            }
+        }
+    }
+
+    private static void walkLoopEntryDeficits(
+        final MultiResourceKey resource,
+        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes,
+        final Set<MultiResourceKey> pathResources,
+        final Set<MultiResourceKey> loopEntryDeficitResources
+    ) {
+        final List<ConcreteRecipe> producingRecipes = outputToRecipes.get(resource);
+        if (producingRecipes == null) {
+            return;
+        }
+        for (final ConcreteRecipe recipe : producingRecipes) {
+            for (final MultiResourceKey inputResource : recipe.input().resourceKeys()) {
+                if (pathResources.contains(inputResource)) {
+                    loopEntryDeficitResources.add(resource);
+                    continue;
+                }
+                pathResources.add(inputResource);
+                walkLoopEntryDeficits(inputResource, outputToRecipes, pathResources, loopEntryDeficitResources);
                 pathResources.remove(inputResource);
             }
         }

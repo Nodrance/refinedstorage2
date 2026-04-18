@@ -492,6 +492,8 @@ class LpTreePreviewTest {
     }
 
     private static TreePreviewNode normalize(final TreePreviewNode node) {
+        // Orders children by resource name and normalizes all children recursively, so that tree equality checks
+        // are not affected by arbitrary ordering of children in the tree preview.
         if (node == null) {
             return null;
         }
