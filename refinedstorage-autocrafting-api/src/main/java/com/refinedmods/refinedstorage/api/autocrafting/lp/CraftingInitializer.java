@@ -747,6 +747,8 @@ public final class CraftingInitializer {
             }
         }
 
+        root.amount = Math.max(amount, root.toCraft);
+
         final PreviewType type = hasMissing(root) ? PreviewType.MISSING_RESOURCES : PreviewType.SUCCESS;
         return new TreePreview(type, root.build(), outputsOfPatternWithCycle(path, relevantPatterns));
     }
