@@ -22,22 +22,42 @@ public final class CraftingSolver {
 
     private final LinearSolver.Options options;
     private final CancellationToken cancellationToken;
+    private final CancellationToken loopSnippingCancellationToken;
 
     public CraftingSolver() {
-        this(LinearSolver.Options.defaults(), CancellationToken.NONE);
+        this(LinearSolver.Options.defaults(), CancellationToken.NONE, CancellationToken.NONE);
     }
 
     public CraftingSolver(final CancellationToken cancellationToken) {
-        this(LinearSolver.Options.defaults(), cancellationToken);
+        this(LinearSolver.Options.defaults(), cancellationToken, cancellationToken);
+    }
+
+    public CraftingSolver(
+        final CancellationToken cancellationToken,
+        final CancellationToken loopSnippingCancellationToken
+    ) {
+        this(LinearSolver.Options.defaults(), cancellationToken, loopSnippingCancellationToken);
     }
 
     public CraftingSolver(final LinearSolver.Options options) {
-        this(options, CancellationToken.NONE);
+        this(options, CancellationToken.NONE, CancellationToken.NONE);
     }
 
     public CraftingSolver(final LinearSolver.Options options, final CancellationToken cancellationToken) {
+        this(options, cancellationToken, cancellationToken);
+    }
+
+    public CraftingSolver(
+        final LinearSolver.Options options,
+        final CancellationToken cancellationToken,
+        final CancellationToken loopSnippingCancellationToken
+    ) {
         this.options = Objects.requireNonNull(options, "options cannot be null");
         this.cancellationToken = Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        this.loopSnippingCancellationToken = Objects.requireNonNull(
+            loopSnippingCancellationToken,
+            "loopSnippingCancellationToken cannot be null"
+        );
     }
 
     public Optional<RecipeApplicationPath> solve(
@@ -68,8 +88,26 @@ public final class CraftingSolver {
                 return buildRecipeApplicationPath(recipes, startingResources, deficitAnalysis);
             }
 
-            final CycleEliminationResult cycleEliminationResult =
-                findRecipeApplicationPlanViaCycleEliminationInternal(recipes, startingResources, target);
+            final CycleEliminationResult cycleEliminationResult;
+            try {
+                cycleEliminationResult = findRecipeApplicationPlanViaCycleEliminationInternal(
+                    recipes,
+                    startingResources,
+                    target
+                );
+            } catch (final CancellationException e) {
+                if (cancellationToken.isCancelled()) {
+                    throw e;
+                }
+                LOGGER.info(
+                    "[LP] solve: loop snipping cancelled, continuing with fallback deficit analysis"
+                );
+                return buildRecipeApplicationPath(
+                    recipes,
+                    startingResources,
+                    computeRequiredBaseItemsAndSolution(recipes, startingResources, target)
+                );
+            }
             throwIfCancelled();
             if (cycleEliminationResult.recipeApplicationResult().isPresent()) {
                 LOGGER.info("[LP] solve: found executable recipe application path without fallback deficit analysis");
@@ -96,6 +134,32 @@ public final class CraftingSolver {
         } catch (final CancellationException e) {
             LOGGER.info("[LP] solve() cancelled.");
             return Optional.empty();
+        }
+    }
+
+    public boolean canCraftWithoutMissingResources(
+        final List<ConcreteRecipe> recipes,
+        final ResourcePool startingResources,
+        final ResourcePool target
+    ) {
+        validateInputs(recipes, startingResources, target);
+        try {
+            throwIfCancelled();
+
+            if (!canCraftTarget(recipes, startingResources, target)) {
+                // Fast path: this would immediately enter deficit analysis in solve(...).
+                return false;
+            }
+
+            final CycleEliminationResult cycleEliminationResult =
+                findRecipeApplicationPlanViaCycleEliminationInternal(recipes, startingResources, target);
+
+            // Fast path: if cycle elimination cannot build an executable path,
+            // solve(...) would enter fallback deficit analysis.
+            return cycleEliminationResult.recipeApplicationResult().isPresent();
+        } catch (final CancellationException e) {
+            LOGGER.info("[LP] canCraftWithoutMissingResources() cancelled.");
+            return false;
         }
     }
 
@@ -179,6 +243,27 @@ public final class CraftingSolver {
 
         final List<ConcreteRecipe> selectedRecipes =
             RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(deficitPriorityRecipes);
+
+        final Set<MultiResourceKey> leafDeficitResources = new LinkedHashSet<>(
+            RecipeAnalyzer.collectLeafResources(selectedRecipes)
+        );
+        if (!leafDeficitResources.isEmpty()) {
+            LOGGER.info(
+                "[LP] computeRequiredBaseItemsAndSolution: pass=leaf selectedRecipes={} totalRecipes={} leafDeficitResources={}",
+                selectedRecipes.size(),
+                recipes.size(),
+                leafDeficitResources
+            );
+            return analyzeDeficitResources(
+                deficitPriorityRecipes,
+                selectedRecipes,
+                leafDeficitResources,
+                startingResources,
+                target,
+                "leaf"
+            );
+        }
+
         final RecipeAnalyzer.SnippedRecipes snippedRecipes = RecipeAnalyzer.snipLoopsOnTargetBranches(
             selectedRecipes,
             target
@@ -190,19 +275,38 @@ public final class CraftingSolver {
             snippedRecipes.snipped().size(),
             recipes.size()
         );
-        final Set<MultiResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(deficitRecipes);
-        relevantResources.addAll(target.resourceKeys());
-
         final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(
             RecipeAnalyzer.collectLeafResources(deficitRecipes)
         );
         deficitResources.addAll(
             RecipeAnalyzer.collectLoopEntryDeficitResourcesOnTargetBranches(selectedRecipes, target)
         );
+        return analyzeDeficitResources(
+            deficitPriorityRecipes,
+            deficitRecipes,
+            deficitResources,
+            startingResources,
+            target,
+            "snipped"
+        );
+    }
+
+    private DeficitAnalysisResult analyzeDeficitResources(
+        final List<ConcreteRecipe> optimizationRecipes,
+        final List<ConcreteRecipe> deficitRecipes,
+        final Set<MultiResourceKey> initialDeficitResources,
+        final ResourcePool startingResources,
+        final ResourcePool target,
+        final String passName
+    ) {
+        final Set<MultiResourceKey> relevantResources = RecipeAnalyzer.collectRelevantResourceKeys(deficitRecipes);
+        relevantResources.addAll(target.resourceKeys());
+
+        final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(initialDeficitResources);
         if (deficitResources.isEmpty()) {
             deficitResources.addAll(target.resourceKeys());
         }
-        LOGGER.info("[LP] computeRequiredBaseItemsAndSolution: deficit resources={}", deficitResources);
+        LOGGER.info("[LP] computeRequiredBaseItemsAndSolution({}): deficit resources={}", passName, deficitResources);
 
         if (deficitRecipes.isEmpty()) {
             final ResourcePool required = new ResourcePool();
@@ -232,7 +336,8 @@ public final class CraftingSolver {
         LinearSolver.Result selectedResult = result;
         ResourcePool required = computeRequiredBaseItems(deficitResources, startingResources, target, selectedResult);
         LOGGER.info(
-            "[LP] computeRequiredBaseItemsAndSolution: initialDeficitResources={} initialTotalDeficit={}",
+            "[LP] computeRequiredBaseItemsAndSolution({}): initialDeficitResources={} initialTotalDeficit={}",
+            passName,
             required,
             totalDeficit(required)
         );
@@ -246,17 +351,18 @@ public final class CraftingSolver {
                 RecipeAnalyzer.detectRecipeCycles(usedRecipes);
             if (cycleDetectionResult.cycles().isEmpty()) {
                 final Set<MultiResourceKey> optimizationRelevantResources = new LinkedHashSet<>(
-                    RecipeAnalyzer.collectRelevantResourceKeys(deficitPriorityRecipes)
+                    RecipeAnalyzer.collectRelevantResourceKeys(optimizationRecipes)
                 );
                 optimizationRelevantResources.addAll(target.resourceKeys());
                 LOGGER.info(
-                    "[LP] computeRequiredBaseItemsAndSolution: attempting deficit optimization "
+                    "[LP] computeRequiredBaseItemsAndSolution({}): attempting deficit optimization "
                         + "with full recipe set (selectedRecipes={}, fullRecipes={})",
+                    passName,
                     deficitRecipes.size(),
-                    recipes.size()
+                    optimizationRecipes.size()
                 );
                 final Optional<LinearSolver.Result> optimizedResult = optimizeDeficitResources(
-                    deficitPriorityRecipes,
+                    optimizationRecipes,
                     optimizationRelevantResources,
                     startingResources,
                     target,
@@ -268,16 +374,18 @@ public final class CraftingSolver {
                     selectedResult = optimizedResult.get();
                     required = computeRequiredBaseItems(deficitResources, startingResources, target, selectedResult);
                     LOGGER.info(
-                            "[LP] computeRequiredBaseItemsAndSolution: optimizedDeficitResources={} "
-                                + "optimizedTotalDeficit={}",
+                        "[LP] computeRequiredBaseItemsAndSolution({}): optimizedDeficitResources={} "
+                            + "optimizedTotalDeficit={}",
+                        passName,
                         required,
                         totalDeficit(required)
                     );
                 }
             } else {
                 LOGGER.info(
-                        "[LP] computeRequiredBaseItemsAndSolution: skipped deficit optimization "
-                            + "because cycles were detected"
+                    "[LP] computeRequiredBaseItemsAndSolution({}): skipped deficit optimization "
+                        + "because cycles were detected",
+                    passName
                 );
             }
         }
@@ -460,7 +568,7 @@ public final class CraftingSolver {
         int exploredBranches = 0;
 
         while (!attempts.isEmpty() && exploredBranches < options.maxCycleEliminationBranches()) {
-            throwIfCancelled();
+            throwIfCancelled(loopSnippingCancellationToken, "LP loop snipping cancelled");
             final Set<UUID> disabledRecipeIds = attempts.pop();
             exploredBranches++;
 
@@ -511,7 +619,7 @@ public final class CraftingSolver {
         final ResourcePool target,
         final Set<UUID> disabledRecipeIds
     ) {
-        throwIfCancelled();
+        throwIfCancelled(loopSnippingCancellationToken, "LP loop snipping cancelled");
         final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
             RecipeAnalyzer.collectRelevantResourceKeys(recipes)
         );
@@ -525,7 +633,7 @@ public final class CraftingSolver {
             Set.of(),
             disabledRecipeIds,
             options,
-            cancellationToken
+            loopSnippingCancellationToken
         ).lexicographicMinimum();
         return Optional.ofNullable(result);
     }
@@ -573,8 +681,12 @@ public final class CraftingSolver {
     }
 
     private void throwIfCancelled() {
-        if (cancellationToken.isCancelled()) {
-            throw new CancellationException("LP solver cancelled");
+        throwIfCancelled(cancellationToken, "LP solver cancelled");
+    }
+
+    private static void throwIfCancelled(final CancellationToken token, final String message) {
+        if (token.isCancelled()) {
+            throw new CancellationException(message);
         }
     }
 

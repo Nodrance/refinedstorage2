@@ -28,6 +28,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -179,7 +180,11 @@ public final class CraftingInitializer {
             Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
             throwIfCancelled(cancellationToken);
 
-            return new CraftingSolver(cancellationToken).solve(
+            final CancellationToken loopSnippingCancellationToken = createLoopSnippingCancellationToken(
+                cancellationToken
+            );
+
+            return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).solve(
                 initialization.concreteRecipes(),
                 initialization.relevantStartingResources(),
                 initialization.target()
@@ -401,16 +406,62 @@ public final class CraftingInitializer {
             targetResource,
             initialization.relevantStartingResources().getAmount(targetResource) + amount
         );
-        final Optional<RecipeApplicationPath> optionalPath = new CraftingSolver(cancellationToken).solve(
+        final CancellationToken loopSnippingCancellationToken = createLoopSnippingCancellationToken(
+            cancellationToken
+        );
+        return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).canCraftWithoutMissingResources(
             initialization.concreteRecipes(),
             initialization.relevantStartingResources(),
             target
         );
-        if (optionalPath.isEmpty()) {
-            return false;
-        }
+    }
 
-        return optionalPath.get().applicationSet().missingResources().isEmpty();
+    private static CancellationToken createLoopSnippingCancellationToken(
+        final CancellationToken everythingCancellationToken
+    ) {
+        final long everythingRemaining = everythingCancellationToken.timeRemainingMillis();
+        final long loopBudgetMillis = everythingRemaining == Long.MAX_VALUE
+            ? Long.MAX_VALUE
+            : Math.max(0L, everythingRemaining - 2000L);
+
+        return new CancellationToken() {
+            private volatile boolean cancelled;
+            private final long deadlineNanos = loopBudgetMillis == Long.MAX_VALUE
+                ? Long.MAX_VALUE
+                : System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(loopBudgetMillis);
+
+            @Override
+            public boolean isCancelled() {
+                return cancelled
+                    || everythingCancellationToken.isCancelled()
+                    || (deadlineNanos != Long.MAX_VALUE && System.nanoTime() >= deadlineNanos);
+            }
+
+            @Override
+            public void cancel() {
+                cancelled = true;
+            }
+
+            @Override
+            public long timeRemainingMillis() {
+                if (cancelled || everythingCancellationToken.isCancelled()) {
+                    return 0L;
+                }
+
+                final long parentRemaining = everythingCancellationToken.timeRemainingMillis();
+                final long localRemaining = deadlineNanos == Long.MAX_VALUE
+                    ? Long.MAX_VALUE
+                    : TimeUnit.NANOSECONDS.toMillis(Math.max(0L, deadlineNanos - System.nanoTime()));
+
+                if (parentRemaining == Long.MAX_VALUE) {
+                    return localRemaining;
+                }
+                if (localRemaining == Long.MAX_VALUE) {
+                    return Math.max(0L, parentRemaining);
+                }
+                return Math.max(0L, Math.min(parentRemaining, localRemaining));
+            }
+        };
     }
 
     public static SolveAndPreviewResult solveAndCalculatePreview(
