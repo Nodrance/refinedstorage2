@@ -37,6 +37,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class LpTreePreviewTest {
+        @Test
+        void shouldNotCalculateForPatternThatIsNotFound() {
+            final RootStorage storage = storage();
+            final PatternRepository patterns = patterns();
+
+            final Executable action = () -> calculateTree(storage, patterns, CRAFTING_TABLE, 1, CancellationToken.NONE);
+
+            final IllegalStateException e = assertThrows(IllegalStateException.class, action);
+            assertThat(e).hasMessage("No pattern found for " + CRAFTING_TABLE);
+        }
     @ParameterizedTest
     @ValueSource(longs = {-1, 0})
     void shouldNotCalculateWithInvalidRequestedAmount(final long requestedAmount) {
@@ -165,13 +175,6 @@ class LpTreePreviewTest {
         assertTreeEquals(actual, expected);
     }
 
-    // Changed from legacy TreePreviewTest expectation:
-    //   Previous: single fixed expectation — SPRUCE branch always chosen:
-    //     tree(CRAFTING_TABLE,1).node(SPRUCE_PLANKS,4).toCraft(4).node(SPRUCE_LOG,1).missing(1).end().end()
-    //   Changed to: accept either OAK or SPRUCE branch as equally valid outcomes.
-    //   Why: Both ingredient sub-patterns cost the same for 1 run; the LP solver sees a symmetric
-    //        problem and may choose either branch. The legacy solver always picked SPRUCE due to
-    //        its deterministic iteration order.
     @Test
     void shouldExhaustAllPossibleIngredientsWhenRunningOutInSingleRootPatternAndMultipleCraftableIngredients() {
         final RootStorage storage = storage();
@@ -182,14 +185,11 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, CRAFTING_TABLE, 1, CancellationToken.NONE);
-        final TreePreview expectedOak = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 1)
-            .node(OAK_PLANKS, 4).toCraft(4).node(OAK_LOG, 1).missing(1).end().end()
-            .build();
-        final TreePreview expectedSpruce = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 1)
+        final TreePreview expected = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 1)
             .node(SPRUCE_PLANKS, 4).toCraft(4).node(SPRUCE_LOG, 1).missing(1).end().end()
             .build();
 
-        assertTreeMatchesAny(actual, expectedOak, expectedSpruce);
+        assertTreeEquals(actual, expected);
     }
 
     @Test
@@ -208,17 +208,6 @@ class LpTreePreviewTest {
         assertTreeEquals(actual, expected);
     }
 
-    // Changed from legacy TreePreviewTest expectation:
-    //   Previous: single fixed expectation — always rounds up to next batch using only the SPRUCE pattern:
-    //     tree(CRAFTING_TABLE,4).node(SPRUCE_PLANKS,16).available(8).missing(8).end()
-    //     (root toCraft=4 because the pattern outputs 2 per run; 2 runs needed → 4 crafted total)
-    //   Changed to: accept either a "split" result (toCraft=3, SPRUCE covers 2 + OAK covers 1,
-    //     missing OAK_PLANKS=4) or a "rounded" result (root toCraft internally =1 run of SPRUCE for
-    //     2 outputs then a second run = toCraft shown as 3 requested but root overproduces;
-    //     SPRUCE_PLANKS=16 with available=8 missing=8).
-    //   Why: The LP solver may split across both root patterns or dedicate to SPRUCE and overshoot to
-    //        the next batch boundary. Both are valid LP solutions; the legacy solver always chose the
-    //        rounded/single-pattern form.
     @Test
     void shouldNotCalculateForMultipleRootPatternsAndSingleIngredientAndAlmostAllResourcesAreAvailable() {
         final RootStorage storage = storage(new ResourceAmount(SPRUCE_PLANKS, 8));
@@ -228,16 +217,11 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
-        final TreePreview expectedSplit = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 3)
-            .node(SPRUCE_PLANKS, 8).available(8).end()
-            .node(OAK_PLANKS, 4).missing(4).end()
-            .build();
-        final TreePreview expectedRounded = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 3)
-            .toCraft(1)
+        final TreePreview expected = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 4)
             .node(SPRUCE_PLANKS, 16).available(8).missing(8).end()
             .build();
 
-        assertTreeMatchesAny(actual, expectedSplit, expectedRounded);
+        assertTreeEquals(actual, expected);
     }
 
     @Test
@@ -261,17 +245,6 @@ class LpTreePreviewTest {
         assertTreeEquals(actual, expected);
     }
 
-    // Changed from legacy TreePreviewTest expectation:
-    //   Previous: single fixed expectation — SPRUCE pattern used for all 3 runs, available OAK_LOG ignored:
-    //     tree(CRAFTING_TABLE,3).node(OAK_PLANKS,12).toCraft(12)
-    //       .node(SPRUCE_LOG,3).missing(3).end().end()
-    //   Changed to: accept either a "split" result (OAK covers 2 runs with available OAK_LOG=2, SPRUCE
-    //     covers 1 run with missing SPRUCE_LOG=1) or an "aggregated" result (all 3 runs on the OAK
-    //     pattern: OAK_LOG available=2, OAK_LOG missing=1).
-    //   Why: The LP solver correctly utilises the 2 available OAK_LOG rather than ignoring them. When
-    //        resolving the remaining 1-run shortage, LP may route through SPRUCE or keep all on OAK —
-    //        both are valid LP solutions. The legacy solver assigned all 3 runs to SPRUCE and did not
-    //        consume any OAK_LOG from storage.
     @Test
     void shouldNotCalculateForSingleRootPatternSingleChildPatternWSingleIngredientAndAlmostAllResourcesAreAvailable() {
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 2));
@@ -282,19 +255,13 @@ class LpTreePreviewTest {
         );
 
         final TreePreview actual = calculateTree(storage, patterns, CRAFTING_TABLE, 3, CancellationToken.NONE);
-        final TreePreview expectedSplit = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 3)
+        final TreePreview expected = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 3)
             .node(OAK_PLANKS, 12).toCraft(12)
-            .node(OAK_LOG, 2).available(2).end()
-            .node(SPRUCE_LOG, 1).missing(1).end()
-            .end()
-            .build();
-        final TreePreview expectedAggregated = tree(PreviewType.MISSING_RESOURCES, CRAFTING_TABLE, 3)
-            .node(OAK_PLANKS, 12).toCraft(12)
-            .node(OAK_LOG, 3).available(2).missing(1).end()
-            .end()
+            .node(SPRUCE_LOG, 3).missing(3)
+            .end().end()
             .build();
 
-        assertTreeMatchesAny(actual, expectedSplit, expectedAggregated);
+        assertTreeEquals(actual, expected);
     }
 
     @Test
@@ -511,30 +478,63 @@ class LpTreePreviewTest {
         );
     }
 
-    /*
     @Test
-    void shouldNotCalculateForPatternThatIsNotFound() {
-        // Legacy tree preview threw when no root pattern existed. LP tree preview returns NOT_AVAILABLE instead.
-    }
+    void shouldSolvePatternCycles() {
+        final RootStorage storage = storage();
+        final var cycledPattern = pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build();
+        final PatternRepository patterns = patterns(
+            cycledPattern,
+            pattern().ingredient(OAK_PLANKS, 4).output(OAK_LOG, 1).build()
+        );
 
-    @Test
-    void shouldDetectPatternCycles() {
-        // Legacy tree preview surfaced CYCLE_DETECTED directly. LP tree preview exposes cycle outputs differently.
+        final TreePreview actual = calculateTree(storage, patterns, OAK_PLANKS, 1, CancellationToken.NONE);
+        // assertThat(actual).usingRecursiveComparison().isEqualTo(new TreePreview(
+        //     PreviewType.CYCLE_DETECTED,
+        //     null,
+        //     cycledPattern.layout().outputs()
+        // ));
+        assertThat(actual.type()).isEqualTo(PreviewType.MISSING_RESOURCES);
+        assertThat(actual.outputsOfPatternWithCycle()).containsExactlyInAnyOrderElementsOf(cycledPattern.layout().outputs());
     }
 
     @Test
     void shouldDetectNumberOverflowInIngredient() {
-        // Overflow reporting is not exposed by LP tree preview with the same contract as the legacy calculator.
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern().ingredient(OAK_LOG, Long.MAX_VALUE).output(OAK_PLANKS, 1).build()
+        );
+
+        final TreePreview actual = calculateTree(storage, patterns, OAK_PLANKS, 2, CancellationToken.NONE);
+        assertThat(actual).usingRecursiveComparison().isEqualTo(new TreePreview(
+            PreviewType.OVERFLOW, null, Collections.emptyList()
+        ));
     }
 
     @Test
     void shouldDetectNumberOverflowWithRootPattern() {
-        // Overflow reporting is not exposed by LP tree preview with the same contract as the legacy calculator.
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).build(),
+            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+        );
+
+        final TreePreview actual = calculateTree(storage, patterns, OAK_PLANKS, Long.MAX_VALUE, CancellationToken.NONE);
+        assertThat(actual).usingRecursiveComparison().isEqualTo(new TreePreview(
+            PreviewType.OVERFLOW, null, Collections.emptyList()
+        ));
     }
 
     @Test
     void shouldDetectNumberOverflowWithOutputOfChildPattern() {
-        // Overflow reporting is not exposed by LP tree preview with the same contract as the legacy calculator.
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern().ingredient(OAK_LOG, 1).output(OAK_PLANKS, 4).output(SIGN, Long.MAX_VALUE).build(),
+            pattern().ingredient(OAK_PLANKS, 4).output(CRAFTING_TABLE, 1).build()
+        );
+
+        final TreePreview actual = calculateTree(storage, patterns, CRAFTING_TABLE, 2, CancellationToken.NONE);
+        assertThat(actual).usingRecursiveComparison().isEqualTo(new TreePreview(
+            PreviewType.OVERFLOW, null, Collections.emptyList()
+        ));
     }
-    */
 }
