@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-// Contains functions that boil down a list of patterns with fuzzy inputs into a smaller list of concrete recipes
+// Contains functions that boil down a list of patterns with fuzzy inputs into a smaller list of sanitized recipes
 public class RecipeSanitizer {
     private RecipeSanitizer() {
     }
@@ -150,7 +150,7 @@ public class RecipeSanitizer {
      * Generates all allocation combinations (stars-and-bars) for multi-unit fuzzy ingredients.
      * Non-fuzzy (single-option) inputs are kept as their original ResourceKey.
      */
-    public static List<ConcreteRecipe> toConcreteRecipes(
+    public static List<SanitizedRecipe> toSanitizedRecipes(
         final List<Pattern> patterns,
         final List<MultiResourceKey> multiResourceKeys,
         final Map<UUID, Integer> patternPriorities
@@ -159,10 +159,10 @@ public class RecipeSanitizer {
         Objects.requireNonNull(multiResourceKeys, "multiResourceKeys cannot be null");
         Objects.requireNonNull(patternPriorities, "patternPriorities cannot be null");
         final Map<ResourceKey, MultiResourceKey> resourceToKey = buildResourceToKeyMap(multiResourceKeys);
-        return toConcreteRecipes(patterns, resourceToKey, patternPriorities);
+        return toSanitizedRecipes(patterns, resourceToKey, patternPriorities);
     }
 
-    public static List<ConcreteRecipe> toConcreteRecipes(
+    public static List<SanitizedRecipe> toSanitizedRecipes(
         final List<Pattern> patterns,
         final MultiResourceKeyIndex multiResourceKeyIndex,
         final Map<UUID, Integer> patternPriorities
@@ -175,15 +175,15 @@ public class RecipeSanitizer {
         for (final Map.Entry<ResourceKey, MultiResourceKey> entry : multiResourceKeyIndex.mrkByMember().entrySet()) {
             resourceToKey.put(entry.getKey(), entry.getValue());
         }
-        return toConcreteRecipes(patterns, resourceToKey, patternPriorities);
+        return toSanitizedRecipes(patterns, resourceToKey, patternPriorities);
     }
 
-    private static List<ConcreteRecipe> toConcreteRecipes(
+    private static List<SanitizedRecipe> toSanitizedRecipes(
         final List<Pattern> patterns,
         final Map<ResourceKey, MultiResourceKey> resourceToKey,
         final Map<UUID, Integer> patternPriorities
     ) {
-        final List<ConcreteRecipe> result = new ArrayList<>();
+        final List<SanitizedRecipe> result = new ArrayList<>();
         for (final Pattern pattern : patterns) {
             expandPattern(pattern, resourceToKey, patternPriorities, result);
         }
@@ -319,7 +319,7 @@ public class RecipeSanitizer {
         final Pattern pattern,
         final Map<ResourceKey, MultiResourceKey> resourceToKey,
         final Map<UUID, Integer> patternPriorities,
-        final List<ConcreteRecipe> result
+        final List<SanitizedRecipe> result
     ) {
         final ResourcePool output = buildOutputPool(pattern);
 
@@ -375,7 +375,7 @@ public class RecipeSanitizer {
                 : pattern.id();
             final long priority = patternPriorities.getOrDefault(pattern.id(), 0);
             final long insertionOrder = result.size();
-            result.add(new ConcreteRecipe(recipeId, pattern.id(), input, output, priority, insertionOrder));
+            result.add(new SanitizedRecipe(recipeId, pattern.id(), input, output, priority, insertionOrder));
         }
     }
 

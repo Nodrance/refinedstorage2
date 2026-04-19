@@ -119,7 +119,7 @@ public final class TaskDispatcher {
 
         final Map<ResourceKey, Long> availablePerIteration = new LinkedHashMap<>();
         for (final var entry : step.recipe().input()) {
-            availablePerIteration.put(toConcreteResourceKey(entry.getKey()), entry.getValue());
+            availablePerIteration.put(toSanitizedResourceKey(entry.getKey()), entry.getValue());
         }
 
         final Map<Integer, Map<ResourceKey, Long>> ingredients = new LinkedHashMap<>();
@@ -585,7 +585,7 @@ public final class TaskDispatcher {
             long amount = 0;
             for (final RecipeApplicationStep step : pendingSteps) {
                 for (final var entry : step.recipe().input()) {
-                    if (toConcreteResourceKey(entry.getKey()).equals(resource)) {
+                    if (toSanitizedResourceKey(entry.getKey()).equals(resource)) {
                         amount += entry.getValue() * step.timesApplied();
                     }
                 }
@@ -616,7 +616,7 @@ public final class TaskDispatcher {
                 if (perIterationAmount <= 0) {
                     continue;
                 }
-                final long availableAmount = available.getOrDefault(toConcreteResourceKey(entry.getKey()), 0L);
+                final long availableAmount = available.getOrDefault(toSanitizedResourceKey(entry.getKey()), 0L);
                 maxIterations = Math.min(maxIterations, availableAmount / perIterationAmount);
                 if (maxIterations <= 0) {
                     return 0;
@@ -629,7 +629,7 @@ public final class TaskDispatcher {
                                                                final long iterations) {
             final Map<ResourceKey, Long> requirements = new HashMap<>();
             for (final var entry : step.recipe().input()) {
-                requirements.merge(toConcreteResourceKey(entry.getKey()), entry.getValue() * iterations, Long::sum);
+                requirements.merge(toSanitizedResourceKey(entry.getKey()), entry.getValue() * iterations, Long::sum);
             }
             return requirements;
         }
@@ -649,7 +649,7 @@ public final class TaskDispatcher {
         return patternsById;
     }
 
-    private static Pattern requirePattern(final ConcreteRecipe recipe, final Map<UUID, Pattern> patternsById) {
+    private static Pattern requirePattern(final SanitizedRecipe recipe, final Map<UUID, Pattern> patternsById) {
         final Pattern pattern = patternsById.get(recipe.sourcePatternId());
         if (pattern != null) {
             return pattern;
@@ -657,7 +657,7 @@ public final class TaskDispatcher {
         throw new IllegalStateException("Missing pattern for recipe " + recipe.recipeId());
     }
 
-    private static ResourceKey toConcreteResourceKey(final MultiResourceKey resourceKey) {
+    private static ResourceKey toSanitizedResourceKey(final MultiResourceKey resourceKey) {
         if (!resourceKey.members().isEmpty()) {
             return resourceKey.members().getFirst();
         }
@@ -665,7 +665,7 @@ public final class TaskDispatcher {
     }
 
     private static boolean hasRecipeCycles(final List<RecipeApplicationStep> steps) {
-        final Map<UUID, ConcreteRecipe> recipesById = new LinkedHashMap<>();
+        final Map<UUID, SanitizedRecipe> recipesById = new LinkedHashMap<>();
         for (final RecipeApplicationStep step : steps) {
             recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
         }

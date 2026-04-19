@@ -37,7 +37,7 @@ public final class ExecutionPlanner {
         throwIfCancelled(cancellationToken);
 
         final Map<UUID, Long> recipeValues = new LinkedHashMap<>();
-        for (final Map.Entry<ConcreteRecipe, Long> entry : applicationSet.recipeValues().entrySet()) {
+        for (final Map.Entry<SanitizedRecipe, Long> entry : applicationSet.recipeValues().entrySet()) {
             throwIfCancelled(cancellationToken);
             final long value = entry.getValue() == null ? 0L : entry.getValue();
             if (value < 0L) {
@@ -77,7 +77,7 @@ public final class ExecutionPlanner {
     }
 
     private static Optional<List<RecipeApplicationStep>> buildExecutableSteps(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, Long> recipeValues,
         final ResourcePool startingResources,
         final CancellationToken cancellationToken
@@ -87,7 +87,7 @@ public final class ExecutionPlanner {
         throwIfCancelled(cancellationToken);
 
         final Map<UUID, Long> remainingCounts = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             throwIfCancelled(cancellationToken);
             final long rawValue = recipeValues.getOrDefault(recipe.recipeId(), 0L);
             if (rawValue < 0L) {
@@ -118,12 +118,12 @@ public final class ExecutionPlanner {
     }
 
     private static List<RecipeApplicationStep> buildFallbackSteps(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, Long> recipeValues,
         final CancellationToken cancellationToken
     ) {
         final List<RecipeApplicationStep> steps = new ArrayList<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             throwIfCancelled(cancellationToken);
             final long rawValue = recipeValues.getOrDefault(recipe.recipeId(), 0L);
             if (rawValue < 0L) {
@@ -137,7 +137,7 @@ public final class ExecutionPlanner {
     }
 
     private static boolean recursivelyBacksolvePlan(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, Boolean> inLoopById,
         final Map<UUID, Long> remainingCounts,
         final ResourcePool inventory,
@@ -187,14 +187,14 @@ public final class ExecutionPlanner {
     }
 
     private static List<Candidate> buildCandidates(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, Boolean> inLoopById,
         final Map<UUID, Long> remainingCounts,
         final ResourcePool inventory,
         final CancellationToken cancellationToken
     ) {
         final List<Candidate> candidates = new ArrayList<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             throwIfCancelled(cancellationToken);
             final Candidate candidate = toCandidate(recipe, remainingCounts, inventory, cancellationToken);
             if (candidate != null) {
@@ -212,7 +212,7 @@ public final class ExecutionPlanner {
     }
 
     private static Candidate toCandidate(
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final Map<UUID, Long> remainingCounts,
         final ResourcePool inventory,
         final CancellationToken cancellationToken
@@ -243,7 +243,7 @@ public final class ExecutionPlanner {
     }
 
     private static boolean tryCandidateBatch(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, Boolean> inLoopById,
         final Map<UUID, Long> remainingCounts,
         final ResourcePool inventory,
@@ -282,7 +282,7 @@ public final class ExecutionPlanner {
     }
 
     private static long computeMaxAffordableBatch(
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final ResourcePool inventory,
         final CancellationToken cancellationToken
     ) {
@@ -299,7 +299,7 @@ public final class ExecutionPlanner {
         return maxBatch;
     }
 
-    private static void applyRecipeBatch(final ConcreteRecipe recipe, final long batch, final ResourcePool inventory) {
+    private static void applyRecipeBatch(final SanitizedRecipe recipe, final long batch, final ResourcePool inventory) {
         for (final Map.Entry<MultiResourceKey, Long> entry : recipe.input()) {
             inventory.subtractAmount(entry.getKey(), entry.getValue() * batch);
         }
@@ -309,7 +309,7 @@ public final class ExecutionPlanner {
     }
 
     private static void rollbackRecipeBatch(
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final long batch,
         final ResourcePool inventory
     ) {
@@ -323,7 +323,7 @@ public final class ExecutionPlanner {
 
     private static void appendOrMergePlanStep(
         final List<RecipeApplicationStep> plan,
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final long batch,
         final Map<UUID, Boolean> inLoopById
     ) {
@@ -340,7 +340,7 @@ public final class ExecutionPlanner {
 
     private static void removeOrShrinkLastPlanStep(
         final List<RecipeApplicationStep> plan,
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final long batch
     ) {
         if (plan.isEmpty()) {
@@ -358,7 +358,7 @@ public final class ExecutionPlanner {
     }
 
     private static void validateInputs(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, Long> recipeValues,
         final ResourcePool startingResources
     ) {
@@ -377,6 +377,6 @@ public final class ExecutionPlanner {
         }
     }
 
-    private record Candidate(ConcreteRecipe recipe, long remaining, long maxBatch) {
+    private record Candidate(SanitizedRecipe recipe, long remaining, long maxBatch) {
     }
 }

@@ -13,32 +13,33 @@ import org.slf4j.LoggerFactory;
 
 // Turns MRKs back into single ResourceKeys
 // This is used to turn the sanitized recipes and resource pools that the crafting solver works with
-// into actual concrete recipes and resource pools that can be executed by the crafter.
+// into specific Patterns and ResourceKeys.
+// Acts as the translation gateway from LP to the rest of the code
 public final class RecipeDesanitizer {
     private static final Logger LOGGER = LoggerFactory.getLogger(RecipeDesanitizer.class);
 
     private RecipeDesanitizer() {
     }
 
-    public static Map<ResourceKey, Long> copyConcreteStorage(final Map<ResourceKey, Long> concreteStorage) {
-        Objects.requireNonNull(concreteStorage, "concreteStorage cannot be null");
-        return new LinkedHashMap<>(concreteStorage);
+    public static Map<ResourceKey, Long> copySanitizedStorage(final Map<ResourceKey, Long> sanitizedStorage) {
+        Objects.requireNonNull(sanitizedStorage, "sanitizedStorage cannot be null");
+        return new LinkedHashMap<>(sanitizedStorage);
     }
 
-    public static ResourcePool decodeSanitizedResourcesToConcrete(
+    public static ResourcePool decodeSanitizedResourcesToSanitized(
         final ResourcePool sanitizedResources,
-        final Map<ResourceKey, Long> remainingConcreteStorage
+        final Map<ResourceKey, Long> remainingSanitizedStorage
     ) {
-        return decodeSanitizedResourcesToConcrete(sanitizedResources, remainingConcreteStorage, CancellationToken.NONE);
+        return decodeSanitizedResourcesToSanitized(sanitizedResources, remainingSanitizedStorage, CancellationToken.NONE);
     }
 
-    public static ResourcePool decodeSanitizedResourcesToConcrete(
+    public static ResourcePool decodeSanitizedResourcesToSanitized(
         final ResourcePool sanitizedResources,
-        final Map<ResourceKey, Long> remainingConcreteStorage,
+        final Map<ResourceKey, Long> remainingSanitizedStorage,
         final CancellationToken cancellationToken
     ) {
         Objects.requireNonNull(sanitizedResources, "sanitizedResources cannot be null");
-        Objects.requireNonNull(remainingConcreteStorage, "remainingConcreteStorage cannot be null");
+        Objects.requireNonNull(remainingSanitizedStorage, "remainingSanitizedStorage cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
@@ -49,20 +50,20 @@ public final class RecipeDesanitizer {
             if (amount <= 0L) {
                 continue;
             }
-            allocateIntoPool(decoded, entry.getKey(), amount, remainingConcreteStorage);
+            allocateIntoPool(decoded, entry.getKey(), amount, remainingSanitizedStorage);
         }
 
         LOGGER.info(
-            "[LP] RecipeDesanitizer.decodeSanitizedResourcesToConcrete: "
-                + "sanitized={} decoded={} remainingConcreteStorage={}",
+            "[LP] RecipeDesanitizer.decodeSanitizedResourcesToSanitized: "
+                + "sanitized={} decoded={} remainingSanitizedStorage={}",
             sanitizedResources,
             decoded,
-            remainingConcreteStorage
+            remainingSanitizedStorage
         );
         return decoded;
     }
 
-    public static ResourcePool convertToConcreteOutputs(final ResourcePool sanitizedResources) {
+    public static ResourcePool convertToSanitizedOutputs(final ResourcePool sanitizedResources) {
         Objects.requireNonNull(sanitizedResources, "sanitizedResources cannot be null");
 
         final ResourcePool decoded = ResourcePool.empty();
@@ -96,24 +97,23 @@ public final class RecipeDesanitizer {
         return sanitizedResources.copy();
     }
 
-    /**
-     * Decodes a sanitized MRK-based {@link ResourcePool} into a concrete pool whose keys are
-     * single-member {@link MultiResourceKey}s.  For each MRK entry the requested amount is
-     * satisfied greedily from {@code concreteStartingResources}, consuming each member in
-     * member-list order.  Any remainder that cannot be resolved against concrete storage falls
-     * back to the first member of the MRK (e.g. for missing resources).
-     */
+    // Decodes a sanitized MRK-based ResourcePool into a pool whose keys are
+    // single-member MultiResourceKeys. For each MRK entry the requested amount is
+    // satisfied greedily from sanitizedStartingResources, consuming each member in
+    // member-list order. Any remainder that cannot be resolved against sanitized storage falls
+    // back to the first member of the MRK (e.g. for missing resources).
+
     public static ResourcePool decodeSanitizedResourcePool(
         final ResourcePool sanitizedResources,
-        final Map<ResourceKey, Long> concreteStartingResources,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
         final CancellationToken cancellationToken
     ) {
         Objects.requireNonNull(sanitizedResources, "sanitizedResources cannot be null");
-        Objects.requireNonNull(concreteStartingResources, "concreteStartingResources cannot be null");
+        Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
-        final Map<ResourceKey, Long> remaining = new LinkedHashMap<>(concreteStartingResources);
+        final Map<ResourceKey, Long> remaining = new LinkedHashMap<>(sanitizedStartingResources);
         final ResourcePool decoded = ResourcePool.empty();
         for (final Map.Entry<MultiResourceKey, Long> entry : sanitizedResources) {
             throwIfCancelled(cancellationToken);
@@ -130,18 +130,18 @@ public final class RecipeDesanitizer {
         final ResourcePool decoded,
         final MultiResourceKey multiResourceKey,
         final long totalNeeded,
-        final Map<ResourceKey, Long> remainingConcreteStorage
+        final Map<ResourceKey, Long> remainingSanitizedStorage
     ) {
         long remaining = totalNeeded;
         for (final ResourceKey member : multiResourceKey.members()) {
             if (remaining <= 0L) {
                 break;
             }
-            final long available = Math.max(0L, remainingConcreteStorage.getOrDefault(member, 0L));
+            final long available = Math.max(0L, remainingSanitizedStorage.getOrDefault(member, 0L));
             final long used = Math.min(remaining, available);
             if (used > 0L) {
                 decoded.addAmount(new MultiResourceKey(List.of(member)), used);
-                remainingConcreteStorage.put(member, available - used);
+                remainingSanitizedStorage.put(member, available - used);
                 remaining -= used;
             }
         }
@@ -152,38 +152,38 @@ public final class RecipeDesanitizer {
 
     public static List<RecipeApplicationStep> decodePlanSteps(
         final List<RecipeApplicationStep> steps,
-        final Map<ResourceKey, Long> concreteStartingResources
+        final Map<ResourceKey, Long> sanitizedStartingResources
     ) {
-        return decodePlanSteps(steps, concreteStartingResources, CancellationToken.NONE);
+        return decodePlanSteps(steps, sanitizedStartingResources, CancellationToken.NONE);
     }
 
     public static List<RecipeApplicationStep> decodePlanSteps(
         final List<RecipeApplicationStep> steps,
-        final Map<ResourceKey, Long> concreteStartingResources,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
         final CancellationToken cancellationToken
     ) {
         Objects.requireNonNull(steps, "steps cannot be null");
-        Objects.requireNonNull(concreteStartingResources, "concreteStartingResources cannot be null");
+        Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
-        final Map<ResourceKey, Long> remainingConcreteStorage = new LinkedHashMap<>(concreteStartingResources);
+        final Map<ResourceKey, Long> remainingSanitizedStorage = new LinkedHashMap<>(sanitizedStartingResources);
         final List<RecipeApplicationStep> decodedSteps = new java.util.ArrayList<>();
         for (final RecipeApplicationStep step : steps) {
             throwIfCancelled(cancellationToken);
             final SanitizedRecipe recipe = step.recipe();
-            final ResourcePool concreteOutput = convertToConcreteOutputs(recipe.output());
+            final ResourcePool sanitizedOutput = convertToSanitizedOutputs(recipe.output());
 
             ResourcePool currentInput = null;
             long currentBatchTimesApplied = 0L;
             for (long index = 0L; index < step.timesApplied(); index++) {
                 throwIfCancelled(cancellationToken);
-                final ResourcePool concreteInput = decodeSanitizedResourcesToConcrete(
+                final ResourcePool sanitizedInput = decodeSanitizedResourcesToSanitized(
                     recipe.input(),
-                    remainingConcreteStorage,
+                    remainingSanitizedStorage,
                     cancellationToken
                 );
-                if (currentInput != null && currentInput.asMap().equals(concreteInput.asMap())) {
+                if (currentInput != null && currentInput.asMap().equals(sanitizedInput.asMap())) {
                     currentBatchTimesApplied++;
                     continue;
                 }
@@ -193,14 +193,14 @@ public final class RecipeDesanitizer {
                             recipe.recipeId(),
                             recipe.sourcePatternId(),
                             currentInput,
-                            concreteOutput,
+                            sanitizedOutput,
                             recipe.priority(),
                             recipe.insertionOrder()
                         ),
                         currentBatchTimesApplied
                     ));
                 }
-                currentInput = concreteInput;
+                currentInput = sanitizedInput;
                 currentBatchTimesApplied = 1L;
             }
 
@@ -210,7 +210,7 @@ public final class RecipeDesanitizer {
                         recipe.recipeId(),
                         recipe.sourcePatternId(),
                         currentInput,
-                        concreteOutput,
+                        sanitizedOutput,
                         recipe.priority(),
                         recipe.insertionOrder()
                     ),

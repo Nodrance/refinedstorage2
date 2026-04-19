@@ -75,26 +75,30 @@ public final class CraftingInitializer {
         for (final Pattern pattern : relevantPatterns) {
             patternPriorities.put(pattern.id(), patternRepository.getPriority(pattern));
         }
-        final List<ConcreteRecipe> concreteRecipes = RecipeSanitizer.toConcreteRecipes(
+
+        final List<SanitizedRecipe> sanitizedRecipes = RecipeSanitizer.toSanitizedRecipes(
             sanitizedPatterns,
             multiResourceKeyIndex,
             patternPriorities
         );
 
+
         final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
         final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
-            RecipeAnalyzer.collectRelevantResourceKeys(concreteRecipes)
+            RecipeAnalyzer.collectRelevantResourceKeys(sanitizedRecipes)
         );
         relevantResources.add(targetResource);
+
 
         final ResourcePool relevantStartingResources = buildRelevantStartingResources(
             rootStorage,
             relevantResources
         );
-        final Map<ResourceKey, Long> concreteStartingResources = buildConcreteStartingResources(
+        final Map<ResourceKey, Long> sanitizedStartingResources = buildSanitizedStartingResources(
             rootStorage,
             relevantResources
         );
+
 
         final ResourcePool target = ResourcePool.empty();
         final long targetAmount = relevantStartingResources.getAmount(targetResource) + amount;
@@ -107,18 +111,18 @@ public final class CraftingInitializer {
         validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
 
         final Initialization init = new Initialization(
-            concreteRecipes,
+            sanitizedRecipes,
             relevantStartingResources,
             target,
-            concreteStartingResources,
+            sanitizedStartingResources,
             relevantResources,
             relevantPatterns,
             sanitizedPatterns
         );
         LOGGER.info(
-            "[LP] Initialization complete: {} concreteRecipes, {} relevantStartingResources, {} target, "
+            "[LP] Initialization complete: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
                 + "{} relevantResources, {} relevantPatterns, {} sanitizedPatterns",
-            init.concreteRecipes().size(), 
+            init.sanitizedRecipes().size(), 
             init.relevantStartingResources(), 
             init.target(), 
             init.relevantResources().size(), 
@@ -145,9 +149,9 @@ public final class CraftingInitializer {
                 cancellationToken
             );
             LOGGER.info(
-                "[LP] Initialization for solve: {} concreteRecipes, {} relevantStartingResources, {} target, "
+                "[LP] Initialization for solve: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
                     + "{} relevantResources, {} relevantPatterns, {} sanitizedPatterns",
-                initialization.concreteRecipes().size(),
+                initialization.sanitizedRecipes().size(),
                 initialization.relevantStartingResources(),
                 initialization.target(),
                 initialization.relevantResources().size(),
@@ -181,12 +185,12 @@ public final class CraftingInitializer {
             );
 
             return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).solve(
-                initialization.concreteRecipes(),
+                initialization.sanitizedRecipes(),
                 initialization.relevantStartingResources(),
                 initialization.target()
             ).map(path -> desanitizeRecipeApplicationPath(
                 path,
-                initialization.concreteStartingResources(),
+                initialization.sanitizedStartingResources(),
                 cancellationToken
             ));
         } catch (final java.util.concurrent.CancellationException e) {
@@ -272,7 +276,7 @@ public final class CraftingInitializer {
         final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
 
         final LinearSolver.Result result = new LinearSolver(
-            maxCalculationInitialization.concreteRecipes(),
+            maxCalculationInitialization.sanitizedRecipes(),
             maxCalculationInitialization.relevantResources(),
             maxCalculationInitialization.relevantStartingResources(),
             ResourcePool.empty(),
@@ -406,7 +410,7 @@ public final class CraftingInitializer {
             cancellationToken
         );
         return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).canCraftWithoutMissingResources(
-            initialization.concreteRecipes(),
+            initialization.sanitizedRecipes(),
             initialization.relevantStartingResources(),
             target
         );
@@ -477,10 +481,10 @@ public final class CraftingInitializer {
                 cancellationToken
             );
             LOGGER.info(
-                "[LP] Initialization for solveAndCalculatePreview: {} concreteRecipes, "
+                "[LP] Initialization for solveAndCalculatePreview: {} sanitizedRecipes, "
                     + "{} relevantStartingResources, {} target, {} relevantResources, "
                     + "{} relevantPatterns, {} sanitizedPatterns",
-                initialization.concreteRecipes().size(), 
+                initialization.sanitizedRecipes().size(), 
                 initialization.relevantStartingResources(), 
                 initialization.target(), 
                 initialization.relevantResources().size(), 
@@ -528,10 +532,10 @@ public final class CraftingInitializer {
                 cancellationToken
             );
             LOGGER.info(
-                "[LP] Initialization for solveAndCalculateTreePreview: {} concreteRecipes, "
+                "[LP] Initialization for solveAndCalculateTreePreview: {} sanitizedRecipes, "
                     + "{} relevantStartingResources, {} target, {} relevantResources, "
                     + "{} relevantPatterns, {} sanitizedPatterns",
-                initialization.concreteRecipes().size(),
+                initialization.sanitizedRecipes().size(),
                 initialization.relevantStartingResources(),
                 initialization.target(),
                 initialization.relevantResources().size(),
@@ -599,20 +603,21 @@ public final class CraftingInitializer {
 
     private static RecipeApplicationPath desanitizeRecipeApplicationPath(
         final RecipeApplicationPath path,
-        final Map<ResourceKey, Long> concreteStartingResources,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
         final CancellationToken cancellationToken
     ) {
         LOGGER.info("[LPT] Entering desanitizeRecipeApplicationPath()");
+
         final List<RecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanSteps(
             path.steps(),
-            concreteStartingResources,
+            sanitizedStartingResources,
             cancellationToken
         );
 
         final RecipeApplicationSet original = path.applicationSet();
         final ResourcePool decodedUsed = RecipeDesanitizer.decodeSanitizedResourcePool(
             original.usedResources(),
-            concreteStartingResources,
+            sanitizedStartingResources,
             cancellationToken
         );
         final ResourcePool decodedMissing = RecipeDesanitizer.decodeSanitizedResources(
@@ -660,7 +665,7 @@ public final class CraftingInitializer {
 
             final List<PendingNode> matchedNodes = new ArrayList<>();
             for (final PendingNode pendingNode : frontier) {
-                if (getConcreteAmount(step.recipe().output(), pendingNode.node.resource) > 0L) {
+                if (getSanitizedAmount(step.recipe().output(), pendingNode.node.resource) > 0L) {
                     matchedNodes.add(pendingNode);
                 }
             }
@@ -679,7 +684,7 @@ public final class CraftingInitializer {
 
                 final NodeBuilder node = pendingNode.node;
                 final long requiredAmount = pendingNode.requiredAmount;
-                final long outputPerIteration = getConcreteAmount(step.recipe().output(), node.resource);
+                final long outputPerIteration = getSanitizedAmount(step.recipe().output(), node.resource);
                 if (outputPerIteration <= 0) {
                     nextNodes.add(pendingNode);
                     continue;
@@ -697,7 +702,7 @@ public final class CraftingInitializer {
                 node.toCraft += craftedAmount;
 
                 for (final var input : step.recipe().input()) {
-                    final ResourceKey inputResource = toConcreteResourceKey(input.getKey());
+                    final ResourceKey inputResource = toSanitizedResourceKey(input.getKey());
                     final long childAmount = input.getValue() * usedIterations;
                     if (childAmount <= 0) {
                         continue;
@@ -723,7 +728,7 @@ public final class CraftingInitializer {
         final Set<ResourceKey> producibleResources = new HashSet<>();
         for (final RecipeApplicationStep step : path.steps()) {
             for (final var output : step.recipe().output()) {
-                producibleResources.add(toConcreteResourceKey(output.getKey()));
+                producibleResources.add(toSanitizedResourceKey(output.getKey()));
             }
         }
 
@@ -754,7 +759,7 @@ public final class CraftingInitializer {
         final Collection<Pattern> relevantPatterns
     ) {
         LOGGER.info("[LPT] Entering outputsOfPatternWithCycle()");
-        final Map<UUID, ConcreteRecipe> recipesById = new LinkedHashMap<>();
+        final Map<UUID, SanitizedRecipe> recipesById = new LinkedHashMap<>();
         for (final RecipeApplicationStep step : path.steps()) {
             recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
         }
@@ -777,7 +782,7 @@ public final class CraftingInitializer {
 
         final Set<ResourceAmount> outputs = new HashSet<>();
         for (final UUID recipeId : cycleRecipeIds) {
-            final ConcreteRecipe recipe = recipesById.get(recipeId);
+            final SanitizedRecipe recipe = recipesById.get(recipeId);
             if (recipe == null) {
                 continue;
             }
@@ -990,11 +995,12 @@ public final class CraftingInitializer {
         return (int) value;
     }
 
-    private static long getConcreteAmount(final ResourcePool pool, final ResourceKey resource) {
+
+    private static long getSanitizedAmount(final ResourcePool pool, final ResourceKey resource) {
         return pool.getAmount(new MultiResourceKey(List.of(resource)));
     }
 
-    private static ResourceKey toConcreteResourceKey(final MultiResourceKey key) {
+    private static ResourceKey toSanitizedResourceKey(final MultiResourceKey key) {
         if (!key.members().isEmpty()) {
             return key.members().getFirst();
         }
@@ -1026,7 +1032,7 @@ public final class CraftingInitializer {
         return result;
     }
 
-    private static Map<ResourceKey, Long> buildConcreteStartingResources(
+    private static Map<ResourceKey, Long> buildSanitizedStartingResources(
         final RootStorage rootStorage,
         final Collection<MultiResourceKey> relevantResources
     ) {
@@ -1108,26 +1114,26 @@ public final class CraftingInitializer {
     }
 
     public record Initialization(
-        List<ConcreteRecipe> concreteRecipes,
+        List<SanitizedRecipe> sanitizedRecipes,
         ResourcePool relevantStartingResources,
         ResourcePool target,
-        Map<ResourceKey, Long> concreteStartingResources,
+        Map<ResourceKey, Long> sanitizedStartingResources,
         Set<MultiResourceKey> relevantResources,
         List<Pattern> relevantPatterns,
         List<Pattern> sanitizedPatterns
     ) {
         public Initialization {
-            Objects.requireNonNull(concreteRecipes, "concreteRecipes cannot be null");
+            Objects.requireNonNull(sanitizedRecipes, "sanitizedRecipes cannot be null");
             Objects.requireNonNull(relevantStartingResources, "relevantStartingResources cannot be null");
             Objects.requireNonNull(target, "target cannot be null");
-            Objects.requireNonNull(concreteStartingResources, "concreteStartingResources cannot be null");
+            Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
             Objects.requireNonNull(relevantResources, "relevantResources cannot be null");
             Objects.requireNonNull(relevantPatterns, "relevantPatterns cannot be null");
             Objects.requireNonNull(sanitizedPatterns, "sanitizedPatterns cannot be null");
-            concreteRecipes = List.copyOf(concreteRecipes);
+            sanitizedRecipes = List.copyOf(sanitizedRecipes);
             relevantStartingResources = relevantStartingResources.copy();
             target = target.copy();
-            concreteStartingResources = Map.copyOf(new LinkedHashMap<>(concreteStartingResources));
+            sanitizedStartingResources = Map.copyOf(new LinkedHashMap<>(sanitizedStartingResources));
             relevantResources = Set.copyOf(relevantResources);
             relevantPatterns = List.copyOf(relevantPatterns);
             sanitizedPatterns = List.copyOf(sanitizedPatterns);

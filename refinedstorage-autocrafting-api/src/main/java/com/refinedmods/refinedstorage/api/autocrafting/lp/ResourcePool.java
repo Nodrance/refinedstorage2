@@ -7,7 +7,7 @@ import java.util.Objects;
 import java.util.Set;
 
 // A pool of resources, where each resource is represented by a MultiResourceKey and has a long amount.
-// Similar to 
+// Supports negatives
 public class ResourcePool implements Iterable<Map.Entry<MultiResourceKey, Long>> {
     private final Map<MultiResourceKey, Long> amounts;
 

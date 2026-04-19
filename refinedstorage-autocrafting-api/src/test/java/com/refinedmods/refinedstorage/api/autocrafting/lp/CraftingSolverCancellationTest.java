@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CraftingSolverCancellationTest {
     @Test
     void shouldFallbackToDeficitAnalysisWhenOnlyLoopSnippingTokenIsCancelled() {
-        final ConcreteRecipe recipe = new ConcreteRecipe(
+        final SanitizedRecipe recipe = new SanitizedRecipe(
             UUID.randomUUID(),
             UUID.randomUUID(),
             pool(OAK_PLANKS, 1),

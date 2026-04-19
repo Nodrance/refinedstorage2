@@ -18,11 +18,11 @@ public class RecipeAnalyzer {
     private RecipeAnalyzer() {
     }
 
-    public static List<MultiResourceKey> collectLeafResources(final List<ConcreteRecipe> recipes) {
+    public static List<MultiResourceKey> collectLeafResources(final List<SanitizedRecipe> recipes) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
         final Set<MultiResourceKey> produced = new LinkedHashSet<>();
         final Set<MultiResourceKey> consumed = new LinkedHashSet<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             produced.addAll(recipe.output().resourceKeys());
             consumed.addAll(recipe.input().resourceKeys());
         }
@@ -37,16 +37,16 @@ public class RecipeAnalyzer {
     }
 
     public static SnippedRecipes snipLoopsOnTargetBranches(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool target
     ) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
         Objects.requireNonNull(target, "target cannot be null");
 
         final Set<UUID> snippedRecipeIds = collectLoopClosingRecipeIdsOnTargetBranches(recipes, target);
-        final List<ConcreteRecipe> unsnipped = new ArrayList<>();
-        final List<ConcreteRecipe> snipped = new ArrayList<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        final List<SanitizedRecipe> unsnipped = new ArrayList<>();
+        final List<SanitizedRecipe> snipped = new ArrayList<>();
+        for (final SanitizedRecipe recipe : recipes) {
             if (snippedRecipeIds.contains(recipe.recipeId())) {
                 snipped.add(recipe);
             } else {
@@ -56,15 +56,15 @@ public class RecipeAnalyzer {
         return new SnippedRecipes(unsnipped, snipped);
     }
 
-    public static CycleDetectionResult detectRecipeCycles(final List<ConcreteRecipe> recipes) {
+    public static CycleDetectionResult detectRecipeCycles(final List<SanitizedRecipe> recipes) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
 
         final List<List<Integer>> adjacency = new ArrayList<>(recipes.size());
         for (int fromIndex = 0; fromIndex < recipes.size(); fromIndex++) {
-            final ConcreteRecipe fromRecipe = recipes.get(fromIndex);
+            final SanitizedRecipe fromRecipe = recipes.get(fromIndex);
             final List<Integer> neighbors = new ArrayList<>();
             for (int toIndex = 0; toIndex < recipes.size(); toIndex++) {
-                final ConcreteRecipe toRecipe = recipes.get(toIndex);
+                final SanitizedRecipe toRecipe = recipes.get(toIndex);
                 if (recipeOutputsFeedRecipeInputs(fromRecipe, toRecipe)) {
                     neighbors.add(toIndex);
                 }
@@ -84,7 +84,7 @@ public class RecipeAnalyzer {
         cycleIndices.sort(RecipeAnalyzer::compareIndexCycles);
 
         final Map<UUID, Boolean> inLoopByRecipeId = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             inLoopByRecipeId.put(recipe.recipeId(), false);
         }
 
@@ -92,7 +92,7 @@ public class RecipeAnalyzer {
         for (final List<Integer> cycle : cycleIndices) {
             final List<UUID> resolvedCycle = new ArrayList<>(cycle.size());
             for (final int index : cycle) {
-                final ConcreteRecipe recipe = recipes.get(index);
+                final SanitizedRecipe recipe = recipes.get(index);
                 inLoopByRecipeId.put(recipe.recipeId(), true);
                 resolvedCycle.add(recipe.recipeId());
             }
@@ -102,18 +102,18 @@ public class RecipeAnalyzer {
         return new CycleDetectionResult(inLoopByRecipeId, cycles);
     }
 
-    public static Set<MultiResourceKey> collectRelevantResourceKeys(final List<ConcreteRecipe> recipes) {
+    public static Set<MultiResourceKey> collectRelevantResourceKeys(final List<SanitizedRecipe> recipes) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
         final Set<MultiResourceKey> relevant = new LinkedHashSet<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             relevant.addAll(recipe.output().resourceKeys());
             relevant.addAll(recipe.input().resourceKeys());
         }
         return relevant;
     }
 
-    public static List<ConcreteRecipe> applyEffectivePriorities(
-        final List<ConcreteRecipe> recipes,
+    public static List<SanitizedRecipe> applyEffectivePriorities(
+        final List<SanitizedRecipe> recipes,
         final ResourcePool target
     ) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
@@ -124,20 +124,20 @@ public class RecipeAnalyzer {
         return buildPrioritizedRecipes(recipes, state.bestRecipePriorities());
     }
 
-    public static List<ConcreteRecipe> selectTopPriorityRecipesPerOutputResource(final List<ConcreteRecipe> recipes) {
+    public static List<SanitizedRecipe> selectTopPriorityRecipesPerOutputResource(final List<SanitizedRecipe> recipes) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
 
-        final List<ConcreteRecipe> sorted = recipes.stream()
+        final List<SanitizedRecipe> sorted = recipes.stream()
             .sorted(Comparator
-                .comparingLong(ConcreteRecipe::priority)
+                .comparingLong(SanitizedRecipe::priority)
                 .reversed()
-                .thenComparingLong(ConcreteRecipe::insertionOrder)
-                .thenComparing(ConcreteRecipe::recipeId))
+                .thenComparingLong(SanitizedRecipe::insertionOrder)
+                .thenComparing(SanitizedRecipe::recipeId))
             .toList();
 
         final Set<MultiResourceKey> seenOutputResources = new LinkedHashSet<>();
         final Set<UUID> selectedRecipeIds = new LinkedHashSet<>();
-        for (final ConcreteRecipe recipe : sorted) {
+        for (final SanitizedRecipe recipe : sorted) {
             boolean producesNewResource = false;
             for (final MultiResourceKey resource : recipe.output().resourceKeys()) {
                 if (!seenOutputResources.contains(resource)) {
@@ -152,8 +152,8 @@ public class RecipeAnalyzer {
             seenOutputResources.addAll(recipe.output().resourceKeys());
         }
 
-        final List<ConcreteRecipe> selected = new ArrayList<>();
-        for (final ConcreteRecipe recipe : sorted) {
+        final List<SanitizedRecipe> selected = new ArrayList<>();
+        for (final SanitizedRecipe recipe : sorted) {
             if (selectedRecipeIds.contains(recipe.recipeId())) {
                 selected.add(recipe);
             }
@@ -162,13 +162,13 @@ public class RecipeAnalyzer {
     }
 
     public static Set<MultiResourceKey> collectLoopEntryDeficitResourcesOnTargetBranches(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool target
     ) {
         Objects.requireNonNull(recipes, "recipes cannot be null");
         Objects.requireNonNull(target, "target cannot be null");
 
-        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
+        final Map<MultiResourceKey, List<SanitizedRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
         final Set<MultiResourceKey> loopEntryDeficitResources = new LinkedHashSet<>();
         for (final MultiResourceKey targetResource : target.resourceKeys()) {
             final Set<MultiResourceKey> pathResources = new LinkedHashSet<>();
@@ -190,7 +190,7 @@ public class RecipeAnalyzer {
         return new TraversalState(bestResourcePriorities, bestRecipePriorities, queue);
     }
 
-    private static void propagatePriorities(final List<ConcreteRecipe> recipes, final TraversalState state) {
+    private static void propagatePriorities(final List<SanitizedRecipe> recipes, final TraversalState state) {
         while (!state.queue().isEmpty()) {
             final ResourcePriorityEntry outputEntry = state.queue().removeLast();
             applyOutputPriorityToRecipes(recipes, outputEntry, state);
@@ -198,11 +198,11 @@ public class RecipeAnalyzer {
     }
 
     private static void applyOutputPriorityToRecipes(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePriorityEntry outputEntry,
         final TraversalState state
     ) {
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             if (!produces(recipe, outputEntry.resource())) {
                 continue;
             }
@@ -233,7 +233,7 @@ public class RecipeAnalyzer {
     }
 
     private static void pushImprovedInputPriorities(
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final PriorityKey candidateRecipePriority,
         final TraversalState state
     ) {
@@ -247,29 +247,29 @@ public class RecipeAnalyzer {
         }
     }
 
-    private static List<ConcreteRecipe> buildPrioritizedRecipes(
-        final List<ConcreteRecipe> recipes,
+    private static List<SanitizedRecipe> buildPrioritizedRecipes(
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, PriorityKey> bestRecipePriorities
     ) {
         final List<RecipePriorityEntry> prunedRecipesWithPriority = collectPrunedRecipesWithPriority(
             recipes,
             bestRecipePriorities
         );
-        final List<ConcreteRecipe> updatedRecipes = assignEffectivePriorities(prunedRecipesWithPriority, recipes);
+        final List<SanitizedRecipe> updatedRecipes = assignEffectivePriorities(prunedRecipesWithPriority, recipes);
         return mapEntriesToRecipes(prunedRecipesWithPriority, updatedRecipes);
     }
 
     private static List<RecipePriorityEntry> collectPrunedRecipesWithPriority(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Map<UUID, PriorityKey> bestRecipePriorities
     ) {
-        final Map<UUID, ConcreteRecipe> recipeById = new HashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        final Map<UUID, SanitizedRecipe> recipeById = new HashMap<>();
+        for (final SanitizedRecipe recipe : recipes) {
             recipeById.put(recipe.recipeId(), recipe);
         }
 
         final List<RecipePriorityEntry> entries = new ArrayList<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             final PriorityKey priority = bestRecipePriorities.get(recipe.recipeId());
             if (priority != null) {
                 entries.add(new RecipePriorityEntry(recipe.recipeId(), priority));
@@ -283,9 +283,9 @@ public class RecipeAnalyzer {
         return entries;
     }
 
-    private static List<ConcreteRecipe> assignEffectivePriorities(
+    private static List<SanitizedRecipe> assignEffectivePriorities(
         final List<RecipePriorityEntry> sortedEntries,
-        final List<ConcreteRecipe> recipes
+        final List<SanitizedRecipe> recipes
     ) {
         final Map<UUID, Long> effectivePriorities = new LinkedHashMap<>();
         for (int index = 0; index < sortedEntries.size(); index++) {
@@ -293,11 +293,11 @@ public class RecipeAnalyzer {
             effectivePriorities.put(recipeAndPriority.recipeId(), (long) (sortedEntries.size() - 1 - index));
         }
 
-        final List<ConcreteRecipe> result = new ArrayList<>(recipes.size());
-        for (final ConcreteRecipe recipe : recipes) {
+        final List<SanitizedRecipe> result = new ArrayList<>(recipes.size());
+        for (final SanitizedRecipe recipe : recipes) {
             final Long effectivePriority = effectivePriorities.get(recipe.recipeId());
             if (effectivePriority != null) {
-                result.add(new ConcreteRecipe(
+                result.add(new SanitizedRecipe(
                     recipe.recipeId(),
                     recipe.sourcePatternId(),
                     recipe.input(),
@@ -312,15 +312,15 @@ public class RecipeAnalyzer {
         return result;
     }
 
-    private static List<ConcreteRecipe> mapEntriesToRecipes(
+    private static List<SanitizedRecipe> mapEntriesToRecipes(
         final List<RecipePriorityEntry> sortedEntries,
-        final List<ConcreteRecipe> recipes
+        final List<SanitizedRecipe> recipes
     ) {
-        final Map<UUID, ConcreteRecipe> byId = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        final Map<UUID, SanitizedRecipe> byId = new LinkedHashMap<>();
+        for (final SanitizedRecipe recipe : recipes) {
             byId.put(recipe.recipeId(), recipe);
         }
-        final List<ConcreteRecipe> prioritizedRecipes = new ArrayList<>(sortedEntries.size());
+        final List<SanitizedRecipe> prioritizedRecipes = new ArrayList<>(sortedEntries.size());
         for (final RecipePriorityEntry entry : sortedEntries) {
             prioritizedRecipes.add(byId.get(entry.recipeId()));
         }
@@ -328,10 +328,10 @@ public class RecipeAnalyzer {
     }
 
     private static Set<UUID> collectLoopClosingRecipeIdsOnTargetBranches(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool target
     ) {
-        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
+        final Map<MultiResourceKey, List<SanitizedRecipe>> outputToRecipes = buildOutputToRecipes(recipes);
         final Set<UUID> loopClosingRecipeIds = new LinkedHashSet<>();
         for (final MultiResourceKey targetResource : target.resourceKeys()) {
             final Set<MultiResourceKey> pathResources = new LinkedHashSet<>();
@@ -341,11 +341,11 @@ public class RecipeAnalyzer {
         return loopClosingRecipeIds;
     }
 
-    private static Map<MultiResourceKey, List<ConcreteRecipe>> buildOutputToRecipes(
-        final List<ConcreteRecipe> recipes
+    private static Map<MultiResourceKey, List<SanitizedRecipe>> buildOutputToRecipes(
+        final List<SanitizedRecipe> recipes
     ) {
-        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes = new HashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        final Map<MultiResourceKey, List<SanitizedRecipe>> outputToRecipes = new HashMap<>();
+        for (final SanitizedRecipe recipe : recipes) {
             for (final MultiResourceKey outputResource : recipe.output().resourceKeys()) {
                 outputToRecipes.computeIfAbsent(outputResource, ignored -> new ArrayList<>()).add(recipe);
             }
@@ -355,15 +355,15 @@ public class RecipeAnalyzer {
 
     private static void walkLoopClosingRecipes(
         final MultiResourceKey resource,
-        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes,
+        final Map<MultiResourceKey, List<SanitizedRecipe>> outputToRecipes,
         final Set<MultiResourceKey> pathResources,
         final Set<UUID> loopClosingRecipeIds
     ) {
-        final List<ConcreteRecipe> producingRecipes = outputToRecipes.get(resource);
+        final List<SanitizedRecipe> producingRecipes = outputToRecipes.get(resource);
         if (producingRecipes == null) {
             return;
         }
-        for (final ConcreteRecipe recipe : producingRecipes) {
+        for (final SanitizedRecipe recipe : producingRecipes) {
             for (final MultiResourceKey inputResource : recipe.input().resourceKeys()) {
                 if (pathResources.contains(inputResource)) {
                     loopClosingRecipeIds.add(recipe.recipeId());
@@ -378,15 +378,15 @@ public class RecipeAnalyzer {
 
     private static void walkLoopEntryDeficits(
         final MultiResourceKey resource,
-        final Map<MultiResourceKey, List<ConcreteRecipe>> outputToRecipes,
+        final Map<MultiResourceKey, List<SanitizedRecipe>> outputToRecipes,
         final Set<MultiResourceKey> pathResources,
         final Set<MultiResourceKey> loopEntryDeficitResources
     ) {
-        final List<ConcreteRecipe> producingRecipes = outputToRecipes.get(resource);
+        final List<SanitizedRecipe> producingRecipes = outputToRecipes.get(resource);
         if (producingRecipes == null) {
             return;
         }
-        for (final ConcreteRecipe recipe : producingRecipes) {
+        for (final SanitizedRecipe recipe : producingRecipes) {
             for (final MultiResourceKey inputResource : recipe.input().resourceKeys()) {
                 if (pathResources.contains(inputResource)) {
                     loopEntryDeficitResources.add(resource);
@@ -400,8 +400,8 @@ public class RecipeAnalyzer {
     }
 
     private static boolean recipeOutputsFeedRecipeInputs(
-        final ConcreteRecipe fromRecipe,
-        final ConcreteRecipe toRecipe
+        final SanitizedRecipe fromRecipe,
+        final SanitizedRecipe toRecipe
     ) {
         for (final MultiResourceKey outputResource : fromRecipe.output().resourceKeys()) {
             if (consumes(toRecipe, outputResource)) {
@@ -411,11 +411,11 @@ public class RecipeAnalyzer {
         return false;
     }
 
-    private static boolean produces(final ConcreteRecipe recipe, final MultiResourceKey resource) {
+    private static boolean produces(final SanitizedRecipe recipe, final MultiResourceKey resource) {
         return recipe.output().getAmount(resource) > 0;
     }
 
-    private static boolean consumes(final ConcreteRecipe recipe, final MultiResourceKey resource) {
+    private static boolean consumes(final SanitizedRecipe recipe, final MultiResourceKey resource) {
         return recipe.input().getAmount(resource) > 0;
     }
 
@@ -474,7 +474,7 @@ public class RecipeAnalyzer {
         return Integer.compare(left.size(), right.size());
     }
 
-    public record SnippedRecipes(List<ConcreteRecipe> unsnipped, List<ConcreteRecipe> snipped) {
+    public record SnippedRecipes(List<SanitizedRecipe> unsnipped, List<SanitizedRecipe> snipped) {
         public SnippedRecipes {
             unsnipped = List.copyOf(unsnipped);
             snipped = List.copyOf(snipped);
@@ -512,7 +512,7 @@ public class RecipeAnalyzer {
             this.values = List.copyOf(values);
         }
 
-        private PriorityKey appendRecipePriority(final ConcreteRecipe recipe) {
+        private PriorityKey appendRecipePriority(final SanitizedRecipe recipe) {
             final List<Long> copy = new ArrayList<>(values);
             copy.add(recipe.priority());
             return new PriorityKey(copy);

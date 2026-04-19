@@ -11,8 +11,8 @@ import java.util.Objects;
 // finalInventoryValues represent what the inventory will look like after using the recipe
 // Missing resources describe what you'd need to add to make it craftable
 public record RecipeApplicationSet(
-    List<ConcreteRecipe> recipes,
-    Map<ConcreteRecipe, Long> recipeValues,
+    List<SanitizedRecipe> recipes,
+    Map<SanitizedRecipe, Long> recipeValues,
     ResourcePool usedResources,
     ResourcePool finalInventoryValues,
     ResourcePool missingResources,

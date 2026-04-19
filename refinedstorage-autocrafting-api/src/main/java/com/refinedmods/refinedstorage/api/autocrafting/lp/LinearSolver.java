@@ -26,8 +26,8 @@ public final class LinearSolver {
     private static final Logger LOGGER = LoggerFactory.getLogger(LinearSolver.class);
     private static final long WAIT_SLICE_MILLIS = 250L;
 
-    private final List<ConcreteRecipe> recipes;
-    private final List<ConcreteRecipe> reversePriorityRecipes;
+    private final List<SanitizedRecipe> recipes;
+    private final List<SanitizedRecipe> reversePriorityRecipes;
     private final Set<MultiResourceKey> relevantResources;
     private final ResourcePool startingResources;
     private final ResourcePool target;
@@ -37,7 +37,7 @@ public final class LinearSolver {
     private final CancellationToken cancellationToken;
 
     public LinearSolver(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final Set<MultiResourceKey> relevantResources,
         final ResourcePool startingResources,
         final ResourcePool target,
@@ -48,7 +48,7 @@ public final class LinearSolver {
     ) {
         this.recipes = List.copyOf(recipes);
         this.reversePriorityRecipes = recipes.stream()
-            .sorted(Comparator.comparingLong(ConcreteRecipe::priority).thenComparing(ConcreteRecipe::recipeId))
+            .sorted(Comparator.comparingLong(SanitizedRecipe::priority).thenComparing(SanitizedRecipe::recipeId))
             .toList();
         this.relevantResources = Set.copyOf(relevantResources);
         this.startingResources = startingResources.copy();
@@ -68,7 +68,7 @@ public final class LinearSolver {
         }
 
         final Map<UUID, Long> lockedRecipeValues = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : reversePriorityRecipes) {
+        for (final SanitizedRecipe recipe : reversePriorityRecipes) {
             throwIfCancelled();
             final Result result = solveWithObjective(null, recipe.recipeId(), false, lockedRecipeValues);
             Objects.requireNonNull(result, "Expected lexicographic lock step to remain feasible");
@@ -380,7 +380,7 @@ public final class LinearSolver {
 
     private Map<UUID, Variable> createRecipeVariables(final ExpressionsBasedModel model) {
         final Map<UUID, Variable> variableByRecipeId = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             throwIfCancelled();
             final boolean disabled = disabledRecipeIds.contains(recipe.recipeId());
             final Variable variable = model.addVariable(recipe.recipeId().toString())
@@ -404,7 +404,7 @@ public final class LinearSolver {
         }
 
         final Expression objective = model.newExpression("objective").weight(1);
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             throwIfCancelled();
             final long coefficient = objectiveCoefficient(recipe, objectiveResource, objectiveRecipeId);
             if (coefficient != 0) {
@@ -414,7 +414,7 @@ public final class LinearSolver {
     }
 
     private long objectiveCoefficient(
-        final ConcreteRecipe recipe,
+        final SanitizedRecipe recipe,
         final MultiResourceKey objectiveResource,
         final UUID objectiveRecipeId
     ) {
@@ -436,7 +436,7 @@ public final class LinearSolver {
             final Expression expression = model.newExpression("constraint:" + resource);
             final long lowerBound = target.getAmount(resource) - startingResources.getAmount(resource);
             expression.lower(lowerBound);
-            for (final ConcreteRecipe recipe : recipes) {
+            for (final SanitizedRecipe recipe : recipes) {
                 throwIfCancelled();
                 final long coefficient = recipeCoefficient(recipe, resource);
                 if (coefficient != 0) {
@@ -470,7 +470,7 @@ public final class LinearSolver {
             final Expression floorExpression = model.newExpression("floor:" + resource);
             final long lowerBound = minimumFinalInventory.getAmount(resource) - startingResources.getAmount(resource);
             floorExpression.lower(lowerBound);
-            for (final ConcreteRecipe recipe : recipes) {
+            for (final SanitizedRecipe recipe : recipes) {
                 throwIfCancelled();
                 final long coefficient = recipeCoefficient(recipe, resource);
                 if (coefficient != 0) {
@@ -496,7 +496,7 @@ public final class LinearSolver {
             final Expression deficitDefinition = model.newExpression("deficit-constraint:" + resource);
             deficitDefinition.lower(target.getAmount(resource) - startingResources.getAmount(resource));
             deficitDefinition.set(deficitVariable, 1);
-            for (final ConcreteRecipe recipe : recipes) {
+            for (final SanitizedRecipe recipe : recipes) {
                 throwIfCancelled();
                 final long coefficient = recipeCoefficient(recipe, resource);
                 if (coefficient != 0) {
@@ -508,7 +508,7 @@ public final class LinearSolver {
 
     private Map<UUID, Long> extractUsedRecipeValues(final Map<UUID, Variable> variableByRecipeId) {
         final Map<UUID, Long> recipeValues = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        for (final SanitizedRecipe recipe : recipes) {
             throwIfCancelled();
             final Variable variable = variableByRecipeId.get(recipe.recipeId());
             final long value = variable.getValue() == null ? 0L : Math.round(variable.getValue().doubleValue());
@@ -524,7 +524,7 @@ public final class LinearSolver {
         for (final MultiResourceKey resource : relevantResources) {
             throwIfCancelled();
             long amount = startingResources.getAmount(resource);
-            for (final ConcreteRecipe recipe : recipes) {
+            for (final SanitizedRecipe recipe : recipes) {
                 throwIfCancelled();
                 final long usage = recipeValues.getOrDefault(recipe.recipeId(), 0L);
                 if (usage == 0) {
@@ -544,7 +544,7 @@ public final class LinearSolver {
         return finalInventoryValues;
     }
 
-    private static long recipeCoefficient(final ConcreteRecipe recipe, final MultiResourceKey resource) {
+    private static long recipeCoefficient(final SanitizedRecipe recipe, final MultiResourceKey resource) {
         return recipe.output().getAmount(resource) - recipe.input().getAmount(resource);
     }
 

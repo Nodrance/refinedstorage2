@@ -61,7 +61,7 @@ public final class CraftingSolver {
     }
 
     public Optional<RecipeApplicationPath> solve(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -115,7 +115,7 @@ public final class CraftingSolver {
             }
 
             final Set<UUID> disabledRecipeIds = cycleEliminationResult.fallbackDisabledRecipeIds();
-            final List<ConcreteRecipe> reducedRecipes = recipes.stream()
+            final List<SanitizedRecipe> reducedRecipes = recipes.stream()
                 .filter(recipe -> !disabledRecipeIds.contains(recipe.recipeId()))
                 .toList();
             LOGGER.info(
@@ -138,7 +138,7 @@ public final class CraftingSolver {
     }
 
     public boolean canCraftWithoutMissingResources(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -164,7 +164,7 @@ public final class CraftingSolver {
     }
 
     public ResourcePool computeRequiredBaseItems(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -186,7 +186,7 @@ public final class CraftingSolver {
     }
 
     private CycleEliminationResult findRecipeApplicationPlanViaCycleElimination(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -201,7 +201,7 @@ public final class CraftingSolver {
     }
 
     private boolean canCraftTarget(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -228,7 +228,7 @@ public final class CraftingSolver {
     }
 
     private DeficitAnalysisResult computeRequiredBaseItemsAndSolution(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -239,9 +239,9 @@ public final class CraftingSolver {
         // COMPATABILITY
         // Comment this line if you want it to actually care about recipe priority
         // instead of trying to match the traditional solver
-        final List<ConcreteRecipe> deficitPriorityRecipes = reverseRecipePrioritiesForDeficitAnalysis(recipes);
+        final List<SanitizedRecipe> deficitPriorityRecipes = reverseRecipePrioritiesForDeficitAnalysis(recipes);
 
-        final List<ConcreteRecipe> selectedRecipes =
+        final List<SanitizedRecipe> selectedRecipes =
             RecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(deficitPriorityRecipes);
 
         final Set<MultiResourceKey> leafDeficitResources = new LinkedHashSet<>(
@@ -268,7 +268,7 @@ public final class CraftingSolver {
             selectedRecipes,
             target
         );
-        final List<ConcreteRecipe> deficitRecipes = snippedRecipes.unsnipped();
+        final List<SanitizedRecipe> deficitRecipes = snippedRecipes.unsnipped();
         LOGGER.info(
             "[LP] computeRequiredBaseItemsAndSolution: selectedRecipes={} snippedRecipes={} totalRecipes={}",
             selectedRecipes.size(),
@@ -292,8 +292,8 @@ public final class CraftingSolver {
     }
 
     private DeficitAnalysisResult analyzeDeficitResources(
-        final List<ConcreteRecipe> optimizationRecipes,
-        final List<ConcreteRecipe> deficitRecipes,
+        final List<SanitizedRecipe> optimizationRecipes,
+        final List<SanitizedRecipe> deficitRecipes,
         final Set<MultiResourceKey> initialDeficitResources,
         final ResourcePool startingResources,
         final ResourcePool target,
@@ -344,7 +344,7 @@ public final class CraftingSolver {
 
         if (selectedResult != null && !required.isEmpty()) {
             final LinearSolver.Result currentResult = selectedResult;
-            final List<ConcreteRecipe> usedRecipes = deficitRecipes.stream()
+            final List<SanitizedRecipe> usedRecipes = deficitRecipes.stream()
                 .filter(recipe -> currentResult.recipeValues().getOrDefault(recipe.recipeId(), 0L) > 0L)
                 .toList();
             final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
@@ -394,7 +394,7 @@ public final class CraftingSolver {
     }
 
     private Optional<LinearSolver.Result> optimizeDeficitResources(
-        final List<ConcreteRecipe> optimizationRecipes,
+        final List<SanitizedRecipe> optimizationRecipes,
         final Set<MultiResourceKey> relevantResources,
         final ResourcePool startingResources,
         final ResourcePool target,
@@ -485,9 +485,9 @@ public final class CraftingSolver {
         return total;
     }
 
-    private static List<ConcreteRecipe> reverseRecipePrioritiesForDeficitAnalysis(final List<ConcreteRecipe> recipes) {
+    private static List<SanitizedRecipe> reverseRecipePrioritiesForDeficitAnalysis(final List<SanitizedRecipe> recipes) {
         return recipes.stream()
-            .map(recipe -> new ConcreteRecipe(
+            .map(recipe -> new SanitizedRecipe(
                 recipe.recipeId(),
                 recipe.sourcePatternId(),
                 recipe.input(),
@@ -499,7 +499,7 @@ public final class CraftingSolver {
     }
 
     private Optional<RecipeApplicationPath> buildRecipeApplicationPath(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final DeficitAnalysisResult deficitAnalysis
     ) {
@@ -522,14 +522,14 @@ public final class CraftingSolver {
         }
 
         final LinearSolver.Result solution = deficitAnalysis.solution().get();
-        final Map<UUID, ConcreteRecipe> recipeById = new LinkedHashMap<>();
-        for (final ConcreteRecipe recipe : recipes) {
+        final Map<UUID, SanitizedRecipe> recipeById = new LinkedHashMap<>();
+        for (final SanitizedRecipe recipe : recipes) {
             recipeById.put(recipe.recipeId(), recipe);
         }
 
-        final Map<ConcreteRecipe, Long> valuesByRecipe = new LinkedHashMap<>();
+        final Map<SanitizedRecipe, Long> valuesByRecipe = new LinkedHashMap<>();
         for (final Map.Entry<UUID, Long> entry : solution.recipeValues().entrySet()) {
-            final ConcreteRecipe recipe = recipeById.get(entry.getKey());
+            final SanitizedRecipe recipe = recipeById.get(entry.getKey());
             if (recipe != null && entry.getValue() > 0L) {
                 valuesByRecipe.put(recipe, entry.getValue());
             }
@@ -554,7 +554,7 @@ public final class CraftingSolver {
     }
 
     private CycleEliminationResult findRecipeApplicationPlanViaCycleEliminationInternal(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {
@@ -591,7 +591,7 @@ public final class CraftingSolver {
                 return new CycleEliminationResult(candidatePath, Set.of());
             }
 
-            final List<ConcreteRecipe> usedRecipes = recipes.stream()
+            final List<SanitizedRecipe> usedRecipes = recipes.stream()
                 .filter(recipe -> solution.get().recipeValues().getOrDefault(recipe.recipeId(), 0L) > 0)
                 .toList();
             final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
@@ -614,7 +614,7 @@ public final class CraftingSolver {
     }
 
     private Optional<LinearSolver.Result> solveWithDisabledRecipes(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target,
         final Set<UUID> disabledRecipeIds
@@ -638,10 +638,10 @@ public final class CraftingSolver {
         return Optional.ofNullable(result);
     }
 
-    private static ResourcePool computeUsedResources(final Map<ConcreteRecipe, Long> recipeValues) {
+    private static ResourcePool computeUsedResources(final Map<SanitizedRecipe, Long> recipeValues) {
         final ResourcePool used = new ResourcePool();
-        for (final Map.Entry<ConcreteRecipe, Long> entry : recipeValues.entrySet()) {
-            final ConcreteRecipe recipe = entry.getKey();
+        for (final Map.Entry<SanitizedRecipe, Long> entry : recipeValues.entrySet()) {
+            final SanitizedRecipe recipe = entry.getKey();
             final long times = entry.getValue();
             for (final Map.Entry<MultiResourceKey, Long> input : recipe.input()) {
                 used.addAmount(input.getKey(), input.getValue() * times);
@@ -671,7 +671,7 @@ public final class CraftingSolver {
     }
 
     private static void validateInputs(
-        final List<ConcreteRecipe> recipes,
+        final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
     ) {

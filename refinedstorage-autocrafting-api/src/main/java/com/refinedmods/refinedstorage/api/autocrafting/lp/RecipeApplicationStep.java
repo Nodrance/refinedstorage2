@@ -5,7 +5,7 @@ import java.util.Objects;
 // Represents the application of a single recipe a certain number of times, as part of a crafting path.
 // This is the most granular step of crafting. A RecipeApplicationPath consists of a list of these.
 public record RecipeApplicationStep(
-    ConcreteRecipe recipe,
+    SanitizedRecipe recipe,
     long timesApplied
 ) {
     public RecipeApplicationStep {
