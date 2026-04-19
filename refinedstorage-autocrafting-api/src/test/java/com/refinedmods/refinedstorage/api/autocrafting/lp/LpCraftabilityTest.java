@@ -102,11 +102,38 @@ class LpCraftabilityTest {
         assertThat(maxAmount).isZero();
     }
 
-    /*
     @Test
     void shouldNotFindMaxAmountIfThereIsANumberOverflow() {
-        // The legacy craftability check treated this scenario as overflow.
-        // LP max-amount uses bounded optimization and does not expose the same overflow contract.
+        final RootStorage storage = storage(
+            new ResourceAmount(OAK_PLANKS, Long.MAX_VALUE)
+        );
+        final PatternRepository patterns = patterns(
+            pattern()
+                .ingredient(OAK_LOG, 1)
+                .output(OAK_PLANKS, 4)
+                .build(),
+            pattern()
+                .ingredient(OAK_PLANKS, 4)
+                .output(CRAFTING_TABLE, 1)
+                .build()
+        );
+
+        final long maxAmount = CraftingInitializer.findMaxCraftableAmount(
+            storage,
+            patterns,
+            CRAFTING_TABLE,
+            Long.MAX_VALUE,
+            CancellationToken.NONE
+        );
+
+        assertThat(maxAmount).isZero();
     }
-    */
+    
+        // --- Helper methods below ---
+        // Place all static helper methods here, after all test methods.
+    
+        // Example helper method
+        static void exampleHelperMethod() {
+            // Implementation of the helper method
+        }
 }

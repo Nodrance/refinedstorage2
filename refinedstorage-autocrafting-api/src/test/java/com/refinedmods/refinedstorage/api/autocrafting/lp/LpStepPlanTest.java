@@ -167,6 +167,28 @@ class LpStepPlanTest {
         assertThat(optionalPlan).isEmpty();
     }
 
+    @Test
+    void shouldDetectNumberOverflowInIngredient() {
+        final RootStorage storage = storage();
+        final PatternRepository patterns = patterns(
+            pattern()
+                .ingredient(OAK_LOG, Long.MAX_VALUE)
+                .output(OAK_PLANKS, 1)
+                .build()
+        );
+
+        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+            storage,
+            patterns,
+            OAK_PLANKS,
+            2,
+            CancellationToken.NONE
+        );
+
+        assertThat(optionalPlan).isEmpty();
+    }
+
+    // --- Helper methods below ---
     private static Optional<RecipeApplicationPath> calculateCraftablePath(
         final RootStorage storage,
         final PatternRepository patterns,
@@ -188,11 +210,4 @@ class LpStepPlanTest {
             .mapToLong(step -> step.timesApplied())
             .sum();
     }
-
-    /*
-    @Test
-    void shouldDetectNumberOverflowInIngredient() {
-        // No direct LP equivalent of legacy TaskPlan overflow semantics is exposed here.
-    }
-    */
 }
