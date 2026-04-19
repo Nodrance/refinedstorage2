@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
-class TreePreviewBuilder {
+public class TreePreviewBuilder {
     private TreePreviewNode current;
     @Nullable
     private final TreePreviewBuilder parent;
@@ -21,7 +21,7 @@ class TreePreviewBuilder {
         this.parent = parent;
     }
 
-    static TreePreviewBuilder tree(final PreviewType type, final ResourceKey resource, final long amount) {
+    public static TreePreviewBuilder tree(final PreviewType type, final ResourceKey resource, final long amount) {
         final TreePreviewNode rootNode = new TreePreviewNode(resource, amount, amount, 0, 0, Collections.emptyList());
         return new TreePreviewBuilder(type, rootNode, null);
     }
