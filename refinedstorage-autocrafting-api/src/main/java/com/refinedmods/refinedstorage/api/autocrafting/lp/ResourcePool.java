@@ -6,12 +6,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Describes a collection of resource keys and amounts.
- * Maps resources to amounts, supporting negative amounts for deficit tracking.
- * Zero amounts are not stored.
- * Equivalent to old_lp's LpResourceSet.
- */
+// A pool of resources, where each resource is represented by a MultiResourceKey and has a long amount.
+// Similar to 
 public class ResourcePool implements Iterable<Map.Entry<MultiResourceKey, Long>> {
     private final Map<MultiResourceKey, Long> amounts;
 

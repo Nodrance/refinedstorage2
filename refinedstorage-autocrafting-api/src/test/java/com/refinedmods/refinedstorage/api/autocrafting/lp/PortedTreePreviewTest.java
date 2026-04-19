@@ -1,9 +1,12 @@
-package com.refinedmods.refinedstorage.api.autocrafting.preview;
+package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
+import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
+import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreview;
+import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreviewNode;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
@@ -36,7 +39,7 @@ import static com.refinedmods.refinedstorage.api.autocrafting.preview.TreePrevie
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class LpTreePreviewTest {
+class PortedTreePreviewTest {
         @Test
         void shouldNotCalculateForPatternThatIsNotFound() {
             final RootStorage storage = storage();
@@ -446,7 +449,7 @@ class LpTreePreviewTest {
             return null;
         }
         final List<TreePreviewNode> normalizedChildren = node.getChildren().stream()
-            .map(LpTreePreviewTest::normalize)
+            .map(PortedTreePreviewTest::normalize)
             .sorted(Comparator.comparing(child -> child.getResource().toString()))
             .toList();
         return new TreePreviewNode(

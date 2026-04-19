@@ -33,10 +33,6 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Bootstraps LP crafting from live network inputs (pattern repository + root storage)
- * by sanitizing patterns and reducing storage/target resources before solving.
- */
 public final class CraftingInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger(CraftingInitializer.class);
 

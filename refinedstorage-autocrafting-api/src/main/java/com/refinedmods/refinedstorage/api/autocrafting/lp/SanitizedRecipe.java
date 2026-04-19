@@ -3,11 +3,9 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import java.util.Objects;
 import java.util.UUID;
 
-/**
- * A recipe with no fuzziness. Represents a concrete LP recipe variant.
- * Equivalent to old_lp's LpPatternRecipe.
- */
-public record ConcreteRecipe(
+// A recipe that uses only MultiResourceKeys as inputs and outputs
+// This means there's no fuzziness, technically, as far as the crafting solver is concerned. 
+public record SanitizedRecipe(
     UUID recipeId,
     UUID sourcePatternId,
     ResourcePool input,
@@ -15,7 +13,7 @@ public record ConcreteRecipe(
     long priority,
     long insertionOrder
 ) {
-    public ConcreteRecipe {
+    public SanitizedRecipe {
         Objects.requireNonNull(recipeId, "recipeId cannot be null");
         Objects.requireNonNull(sourcePatternId, "sourcePatternId cannot be null");
         Objects.requireNonNull(input, "input cannot be null");

@@ -5,11 +5,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Describes the result of an LP solution. Tells you how many times to apply recipes,
- * and tracks input resources, final inventory, and missing resources.
- * Equivalent to old_lp's LpCraftingSolution.
- */
+// Describes the result of an LP solution. Tells you how many times to apply recipes,
+// and tracks input resources, final inventory, and missing resources.
+// Used resources represent how much the inventory will drop by if this recipe is used
+// finalInventoryValues represent what the inventory will look like after using the recipe
+// Missing resources describe what you'd need to add to make it craftable
 public record RecipeApplicationSet(
     List<ConcreteRecipe> recipes,
     Map<ConcreteRecipe, Long> recipeValues,

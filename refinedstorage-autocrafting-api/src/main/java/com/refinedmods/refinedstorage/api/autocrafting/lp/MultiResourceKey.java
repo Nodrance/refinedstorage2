@@ -8,12 +8,11 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-/**
- * A virtual resource representing a set of interchangeable {@link ResourceKey}s.
- * Used in fuzzy recipe expansion where multiple items can satisfy the same ingredient slot.
- * This key is internal to LP solving and intentionally separate from {@link ResourceKey}.
- * Equivalent to old_lp's LpResourceSubset.
- */
+// Represents a single item, one of its ResourceKeys.
+// Which item it actually is will be figured out later
+// For the purposes of the crafting solver, which item it is is irrelevant until then
+// Intentionally does not implement ResourceKey, to avoid confusion and mistakes
+// where a MultiResourceKey is used where a ResourceKey is expected.
 public final class MultiResourceKey {
     private final List<ResourceKey> members;
 

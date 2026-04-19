@@ -2,11 +2,8 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import java.util.Objects;
 
-/**
- * Describes a single application of a recipe. This is used in the RecipeApplicationPath
- * to describe the steps taken to get from the initial inventory to the desired output.
- * Equivalent to old_lp's LpExecutionPlanStep.
- */
+// Represents the application of a single recipe a certain number of times, as part of a crafting path.
+// This is the most granular step of crafting. A RecipeApplicationPath consists of a list of these.
 public record RecipeApplicationStep(
     ConcreteRecipe recipe,
     long timesApplied

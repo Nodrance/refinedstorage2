@@ -11,13 +11,9 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Decodes sanitized MRK-based LP data back to concrete resources.
- *
- * <p>Allocation greedily consumes concrete root storage for MRK members in member order.
- * Once concrete storage for a given MRK is exhausted, remaining demand falls back to the
- * first member of that MRK.
- */
+// Turns MRKs back into single ResourceKeys
+// This is used to turn the sanitized recipes and resource pools that the crafting solver works with
+// into actual concrete recipes and resource pools that can be executed by the crafter.
 public final class RecipeDesanitizer {
     private static final Logger LOGGER = LoggerFactory.getLogger(RecipeDesanitizer.class);
 
@@ -175,7 +171,7 @@ public final class RecipeDesanitizer {
         final List<RecipeApplicationStep> decodedSteps = new java.util.ArrayList<>();
         for (final RecipeApplicationStep step : steps) {
             throwIfCancelled(cancellationToken);
-            final ConcreteRecipe recipe = step.recipe();
+            final SanitizedRecipe recipe = step.recipe();
             final ResourcePool concreteOutput = convertToConcreteOutputs(recipe.output());
 
             ResourcePool currentInput = null;
@@ -193,7 +189,7 @@ public final class RecipeDesanitizer {
                 }
                 if (currentInput != null) {
                     decodedSteps.add(new RecipeApplicationStep(
-                        new ConcreteRecipe(
+                        new SanitizedRecipe(
                             recipe.recipeId(),
                             recipe.sourcePatternId(),
                             currentInput,
@@ -210,7 +206,7 @@ public final class RecipeDesanitizer {
 
             if (currentInput != null) {
                 decodedSteps.add(new RecipeApplicationStep(
-                    new ConcreteRecipe(
+                    new SanitizedRecipe(
                         recipe.recipeId(),
                         recipe.sourcePatternId(),
                         currentInput,

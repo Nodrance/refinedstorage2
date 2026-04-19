@@ -3,11 +3,9 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Describes a list of concrete recipe applications. This is the "path" that the crafting system will take
- * to get from the initial inventory to the desired output.
- * Equivalent to old_lp's LpStepPlan.
- */
+// Augments a set of recipe applications with the actual steps to apply them in, in order.
+// If the RecipeApplicationSet has missing resources, this represents what the crafter would do if they weren't missing
+// If the the item is craftable, this represents what the crafter will actually do.
 public record RecipeApplicationPath(
     RecipeApplicationSet applicationSet,
     List<RecipeApplicationStep> steps
