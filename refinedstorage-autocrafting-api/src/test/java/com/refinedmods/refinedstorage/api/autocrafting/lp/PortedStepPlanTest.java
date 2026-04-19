@@ -1,4 +1,4 @@
-package com.refinedmods.refinedstorage.api.autocrafting.task;
+package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
@@ -30,7 +30,7 @@ import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.S
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class LpStepPlanTest {
+class PortedStepPlanTest {
     @Test
     void shouldNotPlanTaskWhenThereAreMissingResources() {
         final RootStorage storage = storage();

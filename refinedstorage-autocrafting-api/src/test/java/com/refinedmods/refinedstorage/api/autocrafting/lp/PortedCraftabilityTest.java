@@ -1,4 +1,4 @@
-package com.refinedmods.refinedstorage.api.autocrafting.craftability;
+package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
@@ -19,7 +19,7 @@ import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.O
 import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.OAK_PLANKS;
 import static org.assertj.core.api.Assertions.assertThat;
 
-class LpCraftabilityTest {
+class PortedCraftabilityTest {
     @Test
     void shouldNotFindMaxAmountIfThereAreAlwaysMissingResources() {
         final RootStorage storage = storage(
@@ -128,12 +128,4 @@ class LpCraftabilityTest {
 
         assertThat(maxAmount).isZero();
     }
-    
-        // --- Helper methods below ---
-        // Place all static helper methods here, after all test methods.
-    
-        // Example helper method
-        static void exampleHelperMethod() {
-            // Implementation of the helper method
-        }
 }
