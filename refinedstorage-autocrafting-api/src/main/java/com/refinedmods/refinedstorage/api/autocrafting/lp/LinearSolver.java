@@ -63,7 +63,7 @@ public final class LinearSolver {
         throwIfCancelled();
         final Result feasibilityResult = solveWithObjective(null, null, false, Map.of());
         if (feasibilityResult == null) {
-            LOGGER.info("[LP] lexicographicMinimum: no feasible solution for target {}", target);
+            LOGGER.debug("[LP] lexicographicMinimum: no feasible solution for target {}", target);
             return null;
         }
 
@@ -77,14 +77,14 @@ public final class LinearSolver {
 
         final Result result = solveWithObjective(null, null, false, lockedRecipeValues);
         if (result == null) {
-            LOGGER.info(
+            LOGGER.debug(
                 "[LP] lexicographicMinimum: became infeasible after locking {} recipes for target {}",
                 lockedRecipeValues.size(),
                 target
             );
             return null;
         }
-        LOGGER.info(
+        LOGGER.debug(
             "[LP] lexicographicMinimum: solved with activeRecipes={}, totalRecipeApplications={}, "
                 + "nonZeroFinalInventoryResources= {}",
             result.recipeValues().size(),
@@ -97,7 +97,7 @@ public final class LinearSolver {
     public boolean hasFeasibleSolution() {
         throwIfCancelled();
         final boolean feasible = solveWithObjective(null, null, false, Map.of()) != null;
-        LOGGER.info("[LP] hasFeasibleSolution: target={} feasible={}", target, feasible);
+        LOGGER.debug("[LP] hasFeasibleSolution: target={} feasible={}", target, feasible);
         return feasible;
     }
 
@@ -109,7 +109,7 @@ public final class LinearSolver {
             true,
             Map.of()
         );
-        LOGGER.info(
+        LOGGER.debug(
             "[LP] maximize: objectiveResource={} feasible={} activeRecipes={} totalRecipeApplications={}",
             objectiveResource,
             result != null,
@@ -137,7 +137,7 @@ public final class LinearSolver {
             ? deficitBefore
             : sumDeficitAmounts(result.finalInventoryValues(), sanitizedDeficitResources);
         final boolean deficitDecreased = result != null && deficitAfter < deficitBefore;
-        LOGGER.info(
+        LOGGER.debug(
             "[LP] minimizeTotalDeficitWithFloor: deficitResourceCount={} feasible={} "
                 + "totalDeficitBefore={} totalDeficitAfter={} deficitDecreased={}",
             sanitizedDeficitResources.size(),
@@ -532,13 +532,13 @@ public final class LinearSolver {
                 }
                 amount += recipeCoefficient(recipe, resource) * usage;
             }
-            LOGGER.info(
-                "[LP] computeFinalInventoryValues: resource={} startingAmount={} netRecipeChange={} finalAmount={}",
-                resource,
-                startingResources.getAmount(resource),
-                amount - startingResources.getAmount(resource),
-                amount
-            );
+            // LOGGER.debug(
+            //     "[LP] computeFinalInventoryValues: resource={} startingAmount={} netRecipeChange={} finalAmount={}",
+            //     resource,
+            //     startingResources.getAmount(resource),
+            //     amount - startingResources.getAmount(resource),
+            //     amount
+            // );
             finalInventoryValues.setAmount(resource, amount);
         }
         return finalInventoryValues;

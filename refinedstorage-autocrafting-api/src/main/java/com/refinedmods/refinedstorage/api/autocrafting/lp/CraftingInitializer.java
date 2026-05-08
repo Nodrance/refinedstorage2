@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+// Orchestrates crafting tasks. Contains the main entry points for everything.
 public final class CraftingInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger(CraftingInitializer.class);
 
@@ -46,7 +47,7 @@ public final class CraftingInitializer {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering initialize()");
+        LOGGER.debug("[LPT] Entering initialize()");
         Objects.requireNonNull(rootStorage, "rootStorage cannot be null");
         Objects.requireNonNull(patternRepository, "patternRepository cannot be null");
         Objects.requireNonNull(resource, "resource cannot be null");
@@ -54,46 +55,57 @@ public final class CraftingInitializer {
         CoreValidations.validateLargerThanZero(amount, "Requested amount must be greater than 0");
         throwIfCancelled(cancellationToken);
 
+        LOGGER.debug("[LPT] Copying Patterns");
         final List<Pattern> allPatterns = List.copyOf(patternRepository.getAll());
+        LOGGER.debug("[LPT] Filtering Patterns");
         final List<Pattern> relevantPatterns = RecipeSanitizer.collectRelevantPatterns(allPatterns, List.of(resource));
         if (relevantPatterns.isEmpty()) {
             throw new IllegalStateException("No pattern found for " + resource);
         }
 
+        LOGGER.debug("[LPT] Building resources");
         final Set<ResourceKey> availableResources = new LinkedHashSet<>();
         for (final ResourceAmount resourceAmount : rootStorage.getAll()) {
             availableResources.add(resourceAmount.resource());
         }
-        final List<Pattern> sanitizedPatterns = RecipeSanitizer.trimFuzzyPatterns(
+        LOGGER.debug("[LPT] Trimming Patterns");
+        final List<Pattern> trimmedPatterns = RecipeSanitizer.trimFuzzyPatterns(
             relevantPatterns,
             availableResources
         );
 
+        LOGGER.debug("[LPT] Computing MRKs");
         final RecipeSanitizer.MultiResourceKeyIndex multiResourceKeyIndex =
-            RecipeSanitizer.computeMultiResourceKeyIndex(sanitizedPatterns);
+            RecipeSanitizer.computeMultiResourceKeyIndex(trimmedPatterns);
+        
+        LOGGER.debug("[LPT] Getting Pattern Priorities");
         final Map<UUID, Integer> patternPriorities = new LinkedHashMap<>();
         for (final Pattern pattern : relevantPatterns) {
             patternPriorities.put(pattern.id(), patternRepository.getPriority(pattern));
         }
 
+        
+        LOGGER.debug("[LPT] Sanitizing Recipes");
         final List<SanitizedRecipe> sanitizedRecipes = RecipeSanitizer.toSanitizedRecipes(
-            sanitizedPatterns,
+            trimmedPatterns,
             multiResourceKeyIndex,
             patternPriorities
         );
 
 
+        LOGGER.debug("[LPT] Collecting Relevant Resource Keys");
         final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
         final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
             RecipeAnalyzer.collectRelevantResourceKeys(sanitizedRecipes)
         );
-        relevantResources.add(targetResource);
+        // relevantResources.add(targetResource);
 
-
+        LOGGER.debug("[LPT] Building relevant starting resources");
         final ResourcePool relevantStartingResources = buildRelevantStartingResources(
             rootStorage,
             relevantResources
         );
+        LOGGER.debug("[LPT] Building sanitized starting resources");
         final Map<ResourceKey, Long> sanitizedStartingResources = buildSanitizedStartingResources(
             rootStorage,
             relevantResources
@@ -108,6 +120,7 @@ public final class CraftingInitializer {
 		// Comment this line to speed things up a bit at the cost of it just normally failing to solve 
 		// instead of failing to solve with a fancy "overflow error" screen
 
+        LOGGER.debug("[LPT] Validating overflow inputs");
         validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
 
         final Initialization init = new Initialization(
@@ -117,17 +130,17 @@ public final class CraftingInitializer {
             sanitizedStartingResources,
             relevantResources,
             relevantPatterns,
-            sanitizedPatterns
+            trimmedPatterns
         );
-        LOGGER.info(
+        LOGGER.debug(
             "[LP] Initialization complete: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
-                + "{} relevantResources, {} relevantPatterns, {} sanitizedPatterns",
+                + "{} relevantResources, {} relevantPatterns, {} trimmedPatterns",
             init.sanitizedRecipes().size(), 
             init.relevantStartingResources(), 
             init.target(), 
             init.relevantResources().size(), 
             init.relevantPatterns().size(), 
-            init.sanitizedPatterns().size()
+            init.trimmedPatterns().size()
         );
         return init;
     }
@@ -139,7 +152,7 @@ public final class CraftingInitializer {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering solve(RootStorage, PatternRepository, ResourceKey, long, CancellationToken)");
+        LOGGER.debug("[LPT] Entering solve(RootStorage, PatternRepository, ResourceKey, long, CancellationToken)");
         try {
             final Initialization initialization = initialize(
                 rootStorage,
@@ -148,24 +161,24 @@ public final class CraftingInitializer {
                 amount,
                 cancellationToken
             );
-            LOGGER.info(
-                "[LP] Initialization for solve: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
-                    + "{} relevantResources, {} relevantPatterns, {} sanitizedPatterns",
-                initialization.sanitizedRecipes().size(),
-                initialization.relevantStartingResources(),
-                initialization.target(),
-                initialization.relevantResources().size(),
-                initialization.relevantPatterns().size(),
-                initialization.sanitizedPatterns().size()
-            );
+            // LOGGER.debug(
+            //     "[LP] Initialization for solve: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
+            //         + "{} relevantResources, {} relevantPatterns, {} trimmedPatterns",
+            //     initialization.sanitizedRecipes().size(),
+            //     initialization.relevantStartingResources(),
+            //     initialization.target(),
+            //     initialization.relevantResources().size(),
+            //     initialization.relevantPatterns().size(),
+            //     initialization.trimmedPatterns().size()
+            // );
             final Optional<RecipeApplicationPath> result = solve(initialization, cancellationToken);
-            LOGGER.info("[LP] Solve result: {}", result);
+            // LOGGER.debug("[LP] Solve result: {}", result);
             return result;
         } catch (final LpInputOverflowException e) {
-            LOGGER.info("[LP] solve(...) input overflow detected", e);
+            LOGGER.debug("[LP] solve(...) input overflow detected", e);
             return Optional.empty();
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.info("[LP] solve(...) cancelled before path construction");
+            LOGGER.debug("[LP] solve(...) cancelled before path construction");
             return Optional.empty();
         }
     }
@@ -174,7 +187,7 @@ public final class CraftingInitializer {
         final Initialization initialization,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering solve(Initialization, CancellationToken)");
+        LOGGER.debug("[LPT] Entering solve(Initialization, CancellationToken)");
         try {
             Objects.requireNonNull(initialization, "initialization cannot be null");
             Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
@@ -194,7 +207,7 @@ public final class CraftingInitializer {
                 cancellationToken
             ));
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.info("[LP] solve(initialization, ...) cancelled before path construction");
+            LOGGER.debug("[LP] solve(initialization, ...) cancelled before path construction");
             return Optional.empty();
         }
     }
@@ -206,7 +219,7 @@ public final class CraftingInitializer {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info(
+        LOGGER.debug(
             "[LPT] Entering solveToStepPlan("
                 + "RootStorage, PatternRepository, ResourceKey, long, CancellationToken)"
         );
@@ -220,10 +233,10 @@ public final class CraftingInitializer {
             );
             return solve(initialization, cancellationToken);
         } catch (final LpInputOverflowException e) {
-            LOGGER.info("[LP] solveToStepPlan(...) input overflow detected", e);
+            LOGGER.debug("[LP] solveToStepPlan(...) input overflow detected", e);
             return Optional.empty();
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.info("[LP] solveToStepPlan(...) cancelled before path construction");
+            LOGGER.debug("[LP] solveToStepPlan(...) cancelled before path construction");
             return Optional.empty();
         }
     }
@@ -232,7 +245,7 @@ public final class CraftingInitializer {
         final Initialization initialization,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering solveToStepPlan(Initialization, CancellationToken)");
+        LOGGER.debug("[LPT] Entering solveToStepPlan(Initialization, CancellationToken)");
         try {
             Objects.requireNonNull(initialization, "initialization cannot be null");
             Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
@@ -240,7 +253,7 @@ public final class CraftingInitializer {
 
             return solve(initialization, cancellationToken);
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.info("[LP] solveToStepPlan(initialization, ...) cancelled before path construction");
+            LOGGER.debug("[LP] solveToStepPlan(initialization, ...) cancelled before path construction");
             return Optional.empty();
         }
     }
@@ -252,7 +265,7 @@ public final class CraftingInitializer {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering findMaxCraftableAmount()");
+        LOGGER.debug("[LPT] Entering findMaxCraftableAmount()");
         if (cancellationToken.isCancelled()) {
             return 0L;
         }
@@ -267,7 +280,7 @@ public final class CraftingInitializer {
                 cancellationToken
             );
         } catch (final LpInputOverflowException e) {
-            LOGGER.info("[LP] findMaxCraftableAmount(...) input overflow detected", e);
+            LOGGER.debug("[LP] findMaxCraftableAmount(...) input overflow detected", e);
             return 0L;
         }
         if (cancellationToken.isCancelled()) {
@@ -471,7 +484,7 @@ public final class CraftingInitializer {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering solveAndCalculatePreview()");
+        LOGGER.debug("[LPT] Entering solveAndCalculatePreview()");
         try {
             final Initialization initialization = initialize(
                 rootStorage,
@@ -480,33 +493,33 @@ public final class CraftingInitializer {
                 amount,
                 cancellationToken
             );
-            LOGGER.info(
-                "[LP] Initialization for solveAndCalculatePreview: {} sanitizedRecipes, "
-                    + "{} relevantStartingResources, {} target, {} relevantResources, "
-                    + "{} relevantPatterns, {} sanitizedPatterns",
-                initialization.sanitizedRecipes().size(), 
-                initialization.relevantStartingResources(), 
-                initialization.target(), 
-                initialization.relevantResources().size(), 
-                initialization.relevantPatterns().size(), 
-                initialization.sanitizedPatterns().size()
-            );
+            // LOGGER.debug(
+            //     "[LP] Initialization for solveAndCalculatePreview: {} sanitizedRecipes, "
+            //         + "{} relevantStartingResources, {} target, {} relevantResources, "
+            //         + "{} relevantPatterns, {} trimmedPatterns",
+            //     initialization.sanitizedRecipes().size(), 
+            //     initialization.relevantStartingResources(), 
+            //     initialization.target(), 
+            //     initialization.relevantResources().size(), 
+            //     initialization.relevantPatterns().size(), 
+            //     initialization.trimmedPatterns().size()
+            // );
             final Optional<RecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
-            LOGGER.info("[LP] Solve result for preview: {}", recipeApplicationPath);
+            // LOGGER.debug("[LP] Solve result for preview: {}", recipeApplicationPath);
             final Preview previewResult = recipeApplicationPath
                 .map(path -> PreviewCalculator.calculatePreview(path, Set.of(resource), cancellationToken))
                 .orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
-            LOGGER.info("[LP] Preview result: {}", previewResult);
+            // LOGGER.debug("[LP] Preview result: {}", previewResult);
             return new SolveAndPreviewResult(initialization, recipeApplicationPath, previewResult);
         } catch (final LpInputOverflowException e) {
-            LOGGER.info("[LP] solveAndCalculatePreview(...) input overflow detected", e);
+            LOGGER.debug("[LP] solveAndCalculatePreview(...) input overflow detected", e);
             return new SolveAndPreviewResult(
                 emptyInitialization(),
                 Optional.empty(),
                 new Preview(PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList())
             );
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.info("[LP] solveAndCalculatePreview(...) cancelled");
+            LOGGER.debug("[LP] solveAndCalculatePreview(...) cancelled");
             return new SolveAndPreviewResult(
                 emptyInitialization(),
                 Optional.empty(),
@@ -522,7 +535,7 @@ public final class CraftingInitializer {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering solveAndCalculateTreePreview()");
+        LOGGER.debug("[LPT] Entering solveAndCalculateTreePreview()");
         try {
             final Initialization initialization = initialize(
                 rootStorage,
@@ -531,19 +544,19 @@ public final class CraftingInitializer {
                 amount,
                 cancellationToken
             );
-            LOGGER.info(
+            LOGGER.debug(
                 "[LP] Initialization for solveAndCalculateTreePreview: {} sanitizedRecipes, "
                     + "{} relevantStartingResources, {} target, {} relevantResources, "
-                    + "{} relevantPatterns, {} sanitizedPatterns",
+                    + "{} relevantPatterns, {} trimmedPatterns",
                 initialization.sanitizedRecipes().size(),
                 initialization.relevantStartingResources(),
                 initialization.target(),
                 initialization.relevantResources().size(),
                 initialization.relevantPatterns().size(),
-                initialization.sanitizedPatterns().size()
+                initialization.trimmedPatterns().size()
             );
             final Optional<RecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
-            LOGGER.info("[LP] Solve result for tree preview: {}", recipeApplicationPath);
+            // LOGGER.debug("[LP] Solve result for tree preview: {}", recipeApplicationPath);
             final TreePreview previewResult = calculateTreePreview(
                 resource,
                 amount,
@@ -551,17 +564,17 @@ public final class CraftingInitializer {
                 initialization,
                 recipeApplicationPath
             );
-            LOGGER.info("[LP] Tree preview result: {}", previewResult);
+            // LOGGER.debug("[LP] Tree preview result: {}", previewResult);
             return new SolveAndTreePreviewResult(initialization, recipeApplicationPath, previewResult);
         } catch (final LpInputOverflowException e) {
-            LOGGER.info("[LP] solveAndCalculateTreePreview(...) input overflow detected", e);
+            LOGGER.debug("[LP] solveAndCalculateTreePreview(...) input overflow detected", e);
             return new SolveAndTreePreviewResult(
                 emptyInitialization(),
                 Optional.empty(),
                 new TreePreview(PreviewType.OVERFLOW, null, Collections.emptyList())
             );
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.info("[LP] solveAndCalculateTreePreview(...) cancelled");
+            LOGGER.debug("[LP] solveAndCalculateTreePreview(...) cancelled");
             return new SolveAndTreePreviewResult(
                 emptyInitialization(),
                 Optional.empty(),
@@ -577,7 +590,7 @@ public final class CraftingInitializer {
         final Initialization initialization,
         final Optional<RecipeApplicationPath> recipeApplicationPath
     ) {
-        LOGGER.info("[LPT] Entering calculateTreePreview()");
+        LOGGER.debug("[LPT] Entering calculateTreePreview()");
         Objects.requireNonNull(resource, "resource cannot be null");
         Objects.requireNonNull(rootStorage, "rootStorage cannot be null");
         Objects.requireNonNull(initialization, "initialization cannot be null");
@@ -606,7 +619,7 @@ public final class CraftingInitializer {
         final Map<ResourceKey, Long> sanitizedStartingResources,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.info("[LPT] Entering desanitizeRecipeApplicationPath()");
+        LOGGER.debug("[LPT] Entering desanitizeRecipeApplicationPath()");
 
         final List<RecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanSteps(
             path.steps(),
@@ -673,7 +686,7 @@ public final class CraftingInitializer {
         final RecipeApplicationPath path,
         final Collection<Pattern> relevantPatterns
     ) {
-        LOGGER.info("[LPT] Entering buildTreePreviewFromSteps()");
+        LOGGER.debug("[LPT] Entering buildTreePreviewFromSteps()");
         final NodeBuilder root = new NodeBuilder(resource, amount);
         final ArrayDeque<PendingNode> frontier = new ArrayDeque<>();
         frontier.add(new PendingNode(root, amount));
@@ -781,7 +794,7 @@ public final class CraftingInitializer {
         final RecipeApplicationPath path,
         final Collection<Pattern> relevantPatterns
     ) {
-        LOGGER.info("[LPT] Entering outputsOfPatternWithCycle()");
+        LOGGER.debug("[LPT] Entering outputsOfPatternWithCycle()");
         final Map<UUID, SanitizedRecipe> recipesById = new LinkedHashMap<>();
         for (final RecipeApplicationStep step : path.steps()) {
             recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
@@ -824,7 +837,7 @@ public final class CraftingInitializer {
         final Preview preview,
         final Collection<Pattern> relevantPatterns
     ) {
-        LOGGER.info("[LPT] Entering buildFallbackTreePreview()");
+        LOGGER.debug("[LPT] Entering buildFallbackTreePreview()");
         if (preview.type() == PreviewType.CANCELLED || preview.type() == PreviewType.NOT_AVAILABLE) {
             return new TreePreview(preview.type(), null, preview.outputsOfPatternWithCycle());
         }
@@ -865,7 +878,7 @@ public final class CraftingInitializer {
         final Set<ResourceKey> assignedResources,
         final Set<ResourceKey> path
     ) {
-        LOGGER.info("[LPT] Entering attachPatternChildren()");
+        LOGGER.debug("[LPT] Entering attachPatternChildren()");
         if (!path.add(node.resource)) {
             return;
         }
@@ -898,7 +911,7 @@ public final class CraftingInitializer {
         final ResourceKey resource,
         final Collection<Pattern> patterns
     ) {
-        LOGGER.info("[LPT] Entering findPatternProducing()");
+        LOGGER.debug("[LPT] Entering findPatternProducing()");
         for (final Pattern pattern : patterns) {
             for (final ResourceAmount output : pattern.layout().outputs()) {
                 if (output.resource().equals(resource)) {
@@ -913,7 +926,7 @@ public final class CraftingInitializer {
         final Ingredient ingredient,
         final Map<ResourceKey, PreviewItem> previewItemsByResource
     ) {
-        LOGGER.info("[LPT] Entering pickInputResourceForIngredient()");
+        LOGGER.debug("[LPT] Entering pickInputResourceForIngredient()");
         for (final ResourceKey input : ingredient.inputs()) {
             if (previewItemsByResource.containsKey(input)) {
                 return input;
@@ -926,7 +939,7 @@ public final class CraftingInitializer {
         final NodeBuilder node,
         final PreviewItem item
     ) {
-        LOGGER.info("[LPT] Entering applyPreviewItem()");
+        LOGGER.debug("[LPT] Entering applyPreviewItem()");
         if (item == null) {
             return;
         }
@@ -936,7 +949,7 @@ public final class CraftingInitializer {
     }
 
     private static boolean hasMissing(final NodeBuilder node) {
-        LOGGER.info("[LPT] Entering hasMissing()");
+        LOGGER.debug("[LPT] Entering hasMissing()");
         if (node.missing > 0) {
             return true;
         }
@@ -949,7 +962,7 @@ public final class CraftingInitializer {
     }
 
     private static long ceilDiv(final long numerator, final long denominator) {
-        LOGGER.info("[LPT] Entering ceilDiv()");
+        LOGGER.debug("[LPT] Entering ceilDiv()");
         return ((numerator - 1) / denominator) + 1;
     }
 
@@ -1008,7 +1021,7 @@ public final class CraftingInitializer {
     }
 
     private static int clampToInt(final long value) {
-        LOGGER.info("[LPT] Entering clampToInt()");
+        LOGGER.debug("[LPT] Entering clampToInt()");
         if (value > Integer.MAX_VALUE) {
             return Integer.MAX_VALUE;
         }
@@ -1034,7 +1047,7 @@ public final class CraftingInitializer {
         final RootStorage rootStorage,
         final Collection<MultiResourceKey> relevantResources
     ) {
-        LOGGER.info("[LPT] Entering buildRelevantStartingResources()");
+        LOGGER.debug("[LPT] Entering buildRelevantStartingResources()");
         final ResourcePool result = ResourcePool.empty();
         final Set<MultiResourceKey> processedMultiResourceKeys = new LinkedHashSet<>();
 
@@ -1069,7 +1082,7 @@ public final class CraftingInitializer {
     }
 
     private static void throwIfCancelled(final CancellationToken cancellationToken) {
-        LOGGER.info("[LPT] Entering throwIfCancelled()");
+        LOGGER.debug("[LPT] Entering throwIfCancelled()");
         if (cancellationToken.isCancelled()) {
             throw new java.util.concurrent.CancellationException("LP crafting initializer cancelled");
         }
@@ -1143,7 +1156,7 @@ public final class CraftingInitializer {
         Map<ResourceKey, Long> sanitizedStartingResources,
         Set<MultiResourceKey> relevantResources,
         List<Pattern> relevantPatterns,
-        List<Pattern> sanitizedPatterns
+        List<Pattern> trimmedPatterns
     ) {
         public Initialization {
             Objects.requireNonNull(sanitizedRecipes, "sanitizedRecipes cannot be null");
@@ -1152,14 +1165,14 @@ public final class CraftingInitializer {
             Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
             Objects.requireNonNull(relevantResources, "relevantResources cannot be null");
             Objects.requireNonNull(relevantPatterns, "relevantPatterns cannot be null");
-            Objects.requireNonNull(sanitizedPatterns, "sanitizedPatterns cannot be null");
+            Objects.requireNonNull(trimmedPatterns, "trimmedPatterns cannot be null");
             sanitizedRecipes = List.copyOf(sanitizedRecipes);
             relevantStartingResources = relevantStartingResources.copy();
             target = target.copy();
             sanitizedStartingResources = Map.copyOf(new LinkedHashMap<>(sanitizedStartingResources));
             relevantResources = Set.copyOf(relevantResources);
             relevantPatterns = List.copyOf(relevantPatterns);
-            sanitizedPatterns = List.copyOf(sanitizedPatterns);
+            trimmedPatterns = List.copyOf(trimmedPatterns);
         }
     }
 

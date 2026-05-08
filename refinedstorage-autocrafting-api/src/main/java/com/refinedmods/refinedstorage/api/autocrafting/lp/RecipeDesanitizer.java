@@ -53,13 +53,13 @@ public final class RecipeDesanitizer {
             allocateIntoPool(decoded, entry.getKey(), amount, remainingSanitizedStorage);
         }
 
-        LOGGER.info(
-            "[LP] RecipeDesanitizer.decodeSanitizedResourcesToSanitized: "
-                + "sanitized={} decoded={} remainingSanitizedStorage={}",
-            sanitizedResources,
-            decoded,
-            remainingSanitizedStorage
-        );
+        // LOGGER.debug(
+        //     "[LP] RecipeDesanitizer.decodeSanitizedResourcesToSanitized: "
+        //         + "sanitized={} decoded={} remainingSanitizedStorage={}",
+        //     sanitizedResources,
+        //     decoded,
+        //     remainingSanitizedStorage
+        // );
         return decoded;
     }
 

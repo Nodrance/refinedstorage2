@@ -155,8 +155,8 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
     }
 
     boolean shouldUseLinearAutocraftingSystem() {
-        return true;
-        // return AutocraftingModeContext.isUseLinearAutocraftingSystem();
+        // return true;
+        return AutocraftingModeContext.isUseLinearAutocraftingSystem();
     }
 
     private CompletableFuture<Optional<Preview>> getTraditionalPreview(final ResourceKey resource,
