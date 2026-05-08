@@ -37,10 +37,10 @@ class InternalTaskPattern extends AbstractTaskPattern {
     }
 
     @Override
-    PatternStepResult step(final MutableResourceList internalStorage,
-                           final RootStorage rootStorage,
-                           final ExternalPatternSinkProvider sinkProvider,
-                           final TaskListener listener) {
+    public PatternStepResult step(final MutableResourceList internalStorage,
+                                  final RootStorage rootStorage,
+                                  final ExternalPatternSinkProvider sinkProvider,
+                                  final TaskListener listener) {
         final ResourceList iterationInputsSimulated = calculateIterationInputs(Action.SIMULATE);
         if (!extractAll(iterationInputsSimulated, internalStorage, Action.SIMULATE)) {
             return PatternStepResult.IDLE;
@@ -71,7 +71,7 @@ class InternalTaskPattern extends AbstractTaskPattern {
     }
 
     @Override
-    void appendStatus(final TaskStatusBuilder builder) {
+    public void appendStatus(final TaskStatusBuilder builder) {
         if (iterationsRemaining == 0) {
             return;
         }

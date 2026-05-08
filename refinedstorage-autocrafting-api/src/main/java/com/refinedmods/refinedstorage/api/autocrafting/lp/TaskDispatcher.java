@@ -3,7 +3,9 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
 import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatusBuilder;
+import com.refinedmods.refinedstorage.api.autocrafting.task.AbstractTaskPattern;
 import com.refinedmods.refinedstorage.api.autocrafting.task.ExternalPatternSinkProvider;
+import com.refinedmods.refinedstorage.api.autocrafting.task.PatternStepResult;
 import com.refinedmods.refinedstorage.api.autocrafting.task.StepBehavior;
 import com.refinedmods.refinedstorage.api.autocrafting.task.Task;
 import com.refinedmods.refinedstorage.api.autocrafting.task.TaskId;
@@ -175,12 +177,12 @@ public final class TaskDispatcher {
     }
 
     private static final class DispatcherTask extends TaskImpl {
-        private final long startTime = System.currentTimeMillis();
+        private final long startTime;
         private final int totalSteps;
         private final List<RecipeApplicationStep> pendingSteps;
         private final Map<UUID, Pattern> patternsById;
         private final MutableResourceList bufferedInternalStorage = MutableResourceListImpl.create();
-        private final Map<TaskId, DispatchedSubTask> activeSubTasks = new LinkedHashMap<>();
+        private final Map<Integer, StepExecution> activeSteps = new LinkedHashMap<>();
         private final boolean strictOrdering;
         private final Predicate<Pattern> hasProvider;
         private TaskState state = TaskState.READY;
@@ -195,6 +197,7 @@ public final class TaskDispatcher {
                                final Pattern rootPattern,
                                final Predicate<Pattern> hasProvider) {
             super(createDispatcherPlan(resource, amount, rootPattern), actor, notify);
+            this.startTime = System.currentTimeMillis();
             this.strictOrdering = hasRecipeCycles(path.steps());
             this.pendingSteps = new ArrayList<>(path.steps());
             this.totalSteps = path.steps().size();
@@ -217,7 +220,7 @@ public final class TaskDispatcher {
                             final ExternalPatternSinkProvider sinkProvider,
                             final StepBehavior stepBehavior,
                             final TaskListener listener) {
-            boolean changed = pruneCompletedSubTasks();
+            boolean changed = pruneCompletedSteps();
 
             if (state == TaskState.READY) {
                 state = TaskState.RUNNING;
@@ -225,8 +228,8 @@ public final class TaskDispatcher {
             }
 
             if (cancelled) {
-                cancelActiveSubTasks();
-                if (activeSubTasks.isEmpty()) {
+                clearActiveSteps();
+                if (activeSteps.isEmpty()) {
                     state = TaskState.COMPLETED;
                     return true;
                 }
@@ -235,22 +238,22 @@ public final class TaskDispatcher {
             }
 
             if (state == TaskState.RUNNING) {
-                final Set<TaskId> existingSubTasks = new HashSet<>(activeSubTasks.keySet());
-                changed |= stepSpecificSubTasks(existingSubTasks, rootStorage, sinkProvider, stepBehavior, listener);
-                changed |= pruneCompletedSubTasks();
+                // Step all active step patterns
+                changed |= stepActiveStepPatterns(rootStorage, sinkProvider, stepBehavior, listener);
+                changed |= pruneCompletedSteps();
 
+                // Dispatch new steps as resources become available
                 if (strictOrdering) {
                     changed |= dispatchStrict(rootStorage);
                 } else {
                     changed |= dispatchRelaxed(rootStorage);
                 }
 
-                final Set<TaskId> newSubTasks = new HashSet<>(activeSubTasks.keySet());
-                newSubTasks.removeAll(existingSubTasks);
-                changed |= stepSpecificSubTasks(newSubTasks, rootStorage, sinkProvider, stepBehavior, listener);
-                changed |= pruneCompletedSubTasks();
+                // Step newly active patterns
+                changed |= stepActiveStepPatterns(rootStorage, sinkProvider, stepBehavior, listener);
+                changed |= pruneCompletedSteps();
 
-                if (pendingSteps.isEmpty() && activeSubTasks.isEmpty()) {
+                if (pendingSteps.isEmpty() && activeSteps.isEmpty()) {
                     state = bufferedInternalStorage.isEmpty()
                         ? TaskState.COMPLETED
                         : TaskState.RETURNING_INTERNAL_STORAGE;
@@ -260,6 +263,45 @@ public final class TaskDispatcher {
                 changed |= returnBufferedInternalStorage(rootStorage);
             }
 
+            return changed;
+        }
+
+        private boolean stepActiveStepPatterns(final RootStorage rootStorage,
+                                               final ExternalPatternSinkProvider sinkProvider,
+                                               final StepBehavior stepBehavior,
+                                               final TaskListener listener) {
+            boolean changed = false;
+            for (final StepExecution stepExecution : activeSteps.values()) {
+                final var patternIt = stepExecution.patterns.entrySet().iterator();
+                while (patternIt.hasNext()) {
+                    final var patternEntry = patternIt.next();
+                    final Pattern pattern = patternEntry.getKey();
+                    final AbstractTaskPattern taskPattern = patternEntry.getValue();
+                    
+                    if (!stepBehavior.canStep(pattern)) {
+                        continue;
+                    }
+                    
+                    boolean patternChanged = false;
+                    final int steps = stepBehavior.getSteps(pattern);
+                    for (int i = 0; i < steps; ++i) {
+                        final PatternStepResult result = taskPattern.step(
+                            stepExecution.internalStorage,
+                            rootStorage,
+                            sinkProvider,
+                            listener
+                        );
+                        if (result == PatternStepResult.COMPLETED) {
+                            patternIt.remove();
+                            patternChanged = true;
+                            break;
+                        } else if (result != PatternStepResult.IDLE) {
+                            patternChanged = true;
+                        }
+                    }
+                    changed |= patternChanged;
+                }
+            }
             return changed;
         }
 
@@ -285,20 +327,16 @@ public final class TaskDispatcher {
             return returnedAny;
         }
 
-        private boolean pruneCompletedSubTasks() {
+        private boolean pruneCompletedSteps() {
             boolean changed = false;
-            final var it = activeSubTasks.entrySet().iterator();
+            final var it = activeSteps.entrySet().iterator();
             while (it.hasNext()) {
                 final var entry = it.next();
-                final TaskState subTaskState = entry.getValue().task().getState();
-                if (subTaskState == TaskState.COMPLETED
-                    || (!entry.getValue().root() && subTaskState == TaskState.RETURNING_INTERNAL_STORAGE)) {
-                    final MutableResourceList subTaskInternalStorage = entry.getValue()
-                        .task()
-                        .createSnapshot()
-                        .copyInternalStorage();
-                    subTaskInternalStorage.getAll().forEach(resource ->
-                        bufferedInternalStorage.add(resource, subTaskInternalStorage.get(resource)));
+                final StepExecution stepExecution = entry.getValue();
+                // If all patterns are completed, prune the entire step and buffer its internal storage
+                if (stepExecution.patterns.isEmpty()) {
+                    stepExecution.internalStorage.getAll().forEach(resource ->
+                        bufferedInternalStorage.add(resource, stepExecution.internalStorage.get(resource)));
                     it.remove();
                     changed = true;
                 }
@@ -306,31 +344,12 @@ public final class TaskDispatcher {
             return changed;
         }
 
-        private void cancelActiveSubTasks() {
-            final List<DispatchedSubTask> snapshot = List.copyOf(activeSubTasks.values());
-            for (final DispatchedSubTask subTask : snapshot) {
-                subTask.task().cancel();
-            }
-        }
-
-        private boolean stepSpecificSubTasks(final Set<TaskId> taskIds,
-                                             final RootStorage rootStorage,
-                                             final ExternalPatternSinkProvider sinkProvider,
-                                             final StepBehavior stepBehavior,
-                                             final TaskListener listener) {
-            boolean changed = false;
-            for (final TaskId taskId : taskIds) {
-                final DispatchedSubTask subTask = activeSubTasks.get(taskId);
-                if (subTask == null) {
-                    continue;
-                }
-                changed |= subTask.task().step(rootStorage, sinkProvider, stepBehavior, listener);
-            }
-            return changed;
+        private void clearActiveSteps() {
+            activeSteps.clear();
         }
 
         private boolean dispatchStrict(final RootStorage rootStorage) {
-            if (!activeSubTasks.isEmpty() || pendingSteps.isEmpty()) {
+            if (!activeSteps.isEmpty() || pendingSteps.isEmpty()) {
                 return false;
             }
 
@@ -342,8 +361,7 @@ public final class TaskDispatcher {
             }
             final Map<ResourceKey, Long> requirements = stepRequirements(next, dispatchIterations);
 
-            final Optional<TaskId> dispatched = dispatchSubTask(next, dispatchIterations, requirements);
-            if (dispatched.isEmpty()) {
+            if (!dispatchStepExecution(next, dispatchIterations, requirements, rootStorage)) {
                 return false;
             }
 
@@ -369,8 +387,7 @@ public final class TaskDispatcher {
                     }
                     final Map<ResourceKey, Long> requirements = stepRequirements(step, dispatchIterations);
 
-                    final Optional<TaskId> dispatched = dispatchSubTask(step, dispatchIterations, requirements);
-                    if (dispatched.isEmpty()) {
+                    if (!dispatchStepExecution(step, dispatchIterations, requirements, rootStorage)) {
                         continue;
                     }
 
@@ -396,30 +413,21 @@ public final class TaskDispatcher {
             pendingSteps.set(index, new RecipeApplicationStep(originalStep.recipe(), remainingIterations));
         }
 
-        private Optional<TaskId> dispatchSubTask(final RecipeApplicationStep step,
-                                                 final long dispatchIterations,
-                                                 final Map<ResourceKey, Long> requirements) {
+        private boolean dispatchStepExecution(final RecipeApplicationStep step,
+                                              final long dispatchIterations,
+                                              final Map<ResourceKey, Long> requirements,
+                                              final RootStorage rootStorage) {
             final RecipeApplicationStep dispatchedStep = new RecipeApplicationStep(step.recipe(), dispatchIterations);
-            final boolean root = step.recipe().output().getAmount(new MultiResourceKey(List.of(getResource()))) > 0L;
-            final TaskPlan plan = toSingleStepPlan(getResource(), -1, dispatchedStep, patternsById, root);
+            final TaskPlan plan = toSingleStepPlan(getResource(), -1, dispatchedStep, patternsById, true);
             final Pattern pattern = requirePattern(step.recipe(), patternsById);
 
             if (!hasProvider.test(pattern)) {
-                return Optional.empty();
+                return false;
             }
 
-            final SeededSubTask seededSubTask = createSeededSubTask(plan, requirements);
-            activeSubTasks.put(
-                seededSubTask.task().getId(),
-                new DispatchedSubTask(seededSubTask.task(), seededSubTask.remainingRequirements(), root)
-            );
-            return Optional.of(seededSubTask.task().getId());
-        }
-
-        private SeededSubTask createSeededSubTask(final TaskPlan plan,
-                                                  final Map<ResourceKey, Long> requirements) {
+            // Create step execution with seeded storage
             final MutableResourceList seededInternalStorage = MutableResourceListImpl.create();
-            final MutableResourceList remainingInitialRequirements = MutableResourceListImpl.create();
+            final MutableResourceList remainingRequirements = MutableResourceListImpl.create();
 
             requirements.forEach((resource, amountNeeded) -> {
                 final long bufferedAmount = bufferedInternalStorage.get(resource);
@@ -431,32 +439,20 @@ public final class TaskDispatcher {
 
                 final long remaining = amountNeeded - consumedFromBuffer;
                 if (remaining > 0) {
-                    remainingInitialRequirements.add(resource, remaining);
+                    remainingRequirements.add(resource, remaining);
                 }
             });
 
-            final TaskImpl baseTask = new TaskImpl(plan, getActor(), false);
-            final TaskSnapshot baseSnapshot = baseTask.createSnapshot();
-            final TaskState initialState = remainingInitialRequirements.isEmpty() ? TaskState.RUNNING : TaskState.READY;
-            final TaskImpl task = new TaskImpl(new TaskSnapshot(
-                baseSnapshot.id(),
-                baseSnapshot.resource(),
-                baseSnapshot.amount(),
-                baseSnapshot.actor(),
-                baseSnapshot.notifyActor(),
-                baseSnapshot.startTime(),
-                baseSnapshot.patterns(),
-                baseSnapshot.completedPatterns(),
-                remainingInitialRequirements.copy(),
-                seededInternalStorage.copy(),
-                initialState,
-                false
-            ));
+            // Create patterns directly for this step
+            final Map<Pattern, AbstractTaskPattern> stepPatterns = new LinkedHashMap<>();
+            for (final var patternEntry : plan.patterns().entrySet()) {
+                stepPatterns.put(patternEntry.getKey(), createTaskPatternInternal(patternEntry.getKey(), patternEntry.getValue()));
+            }
 
-            final Map<ResourceKey, Long> remainingRequirements = new HashMap<>();
-            remainingInitialRequirements.getAll().forEach(resource ->
-                remainingRequirements.put(resource, remainingInitialRequirements.get(resource)));
-            return new SeededSubTask(task, remainingRequirements);
+            // Add step execution
+            final int stepIndex = activeSteps.isEmpty() ? 0 : activeSteps.keySet().stream().mapToInt(i -> i).max().orElse(-1) + 1;
+            activeSteps.put(stepIndex, new StepExecution(stepPatterns, remainingRequirements.copy(), seededInternalStorage.copy()));
+            return true;
         }
 
         @Override
@@ -474,28 +470,38 @@ public final class TaskDispatcher {
                 startTime
             );
             if (strictOrdering) {
-                builder.processing(getResource(), Math.max(1, activeSubTasks.size() + pendingSteps.size()), null);
+                builder.processing(getResource(), Math.max(1, activeSteps.size() + pendingSteps.size()), null);
             } else if (!pendingSteps.isEmpty()) {
                 builder.scheduled(getResource(), pendingSteps.size());
             }
+            
+            // Append status from all active step patterns
+            for (final StepExecution stepExecution : activeSteps.values()) {
+                for (final AbstractTaskPattern pattern : stepExecution.patterns.values()) {
+                    pattern.appendStatus(builder);
+                }
+            }
+            
+            // Add buffered internal storage
+            bufferedInternalStorage.getAll().forEach(resource ->
+                builder.stored(resource, bufferedInternalStorage.get(resource)));
+
             return builder.build(progress());
         }
 
         @Override
         public TaskSnapshot createSnapshot() {
-            final MutableResourceList internalStorage = MutableResourceListImpl.create();
-            final MutableResourceList initialRequirements = MutableResourceListImpl.create();
+            final MutableResourceList allInternalStorage = MutableResourceListImpl.create();
+            final MutableResourceList allInitialRequirements = MutableResourceListImpl.create();
 
             bufferedInternalStorage.getAll().forEach(resource ->
-                internalStorage.add(resource, bufferedInternalStorage.get(resource)));
+                allInternalStorage.add(resource, bufferedInternalStorage.get(resource)));
 
-            for (final DispatchedSubTask subTask : activeSubTasks.values()) {
-                final TaskSnapshot snapshot = subTask.task().createSnapshot();
-                final MutableResourceList subTaskInternalStorage = snapshot.copyInternalStorage();
-                subTaskInternalStorage.getAll().forEach(resource ->
-                    internalStorage.add(resource, subTaskInternalStorage.get(resource)));
-                snapshot.initialRequirements().getAll().forEach(resource ->
-                    initialRequirements.add(resource, snapshot.initialRequirements().get(resource)));
+            for (final StepExecution stepExecution : activeSteps.values()) {
+                stepExecution.internalStorage.getAll().forEach(resource ->
+                    allInternalStorage.add(resource, stepExecution.internalStorage.get(resource)));
+                stepExecution.initialRequirements.getAll().forEach(resource ->
+                    allInitialRequirements.add(resource, stepExecution.initialRequirements.get(resource)));
             }
 
             return new TaskSnapshot(
@@ -507,8 +513,8 @@ public final class TaskDispatcher {
                 startTime,
                 Map.of(),
                 List.of(),
-                initialRequirements.copy(),
-                internalStorage.copy(),
+                allInitialRequirements.copy(),
+                allInternalStorage.copy(),
                 state,
                 cancelled
             );
@@ -521,11 +527,13 @@ public final class TaskDispatcher {
             }
 
             long intercepted = 0;
-            for (final DispatchedSubTask subTask : activeSubTasks.values()) {
-                final long available = insertedAmount - intercepted;
-                intercepted += subTask.task().beforeInsert(insertedResource, available);
-                if (intercepted == insertedAmount) {
-                    break;
+            for (final StepExecution stepExecution : activeSteps.values()) {
+                for (final AbstractTaskPattern pattern : stepExecution.patterns.values()) {
+                    final long available = insertedAmount - intercepted;
+                    intercepted += pattern.beforeInsert(insertedResource, available);
+                    if (intercepted == insertedAmount) {
+                        return intercepted;
+                    }
                 }
             }
 
@@ -544,11 +552,13 @@ public final class TaskDispatcher {
         @Override
         public long afterInsert(final ResourceKey insertedResource, final long insertedAmount) {
             long reserved = 0;
-            for (final DispatchedSubTask subTask : activeSubTasks.values()) {
-                final long available = insertedAmount - reserved;
-                reserved += subTask.task().afterInsert(insertedResource, available);
-                if (reserved == insertedAmount) {
-                    return reserved;
+            for (final StepExecution stepExecution : activeSteps.values()) {
+                for (final AbstractTaskPattern pattern : stepExecution.patterns.values()) {
+                    final long available = insertedAmount - reserved;
+                    reserved += pattern.afterInsert(insertedResource, available);
+                    if (reserved == insertedAmount) {
+                        return reserved;
+                    }
                 }
             }
             return reserved;
@@ -563,7 +573,7 @@ public final class TaskDispatcher {
             if (totalSteps == 0) {
                 return 1D;
             }
-            final int remaining = pendingSteps.size() + activeSubTasks.size();
+            final int remaining = pendingSteps.size() + activeSteps.size();
             final int done = Math.max(0, totalSteps - remaining);
             return done / (double) totalSteps;
         }
@@ -575,9 +585,6 @@ public final class TaskDispatcher {
             }
             bufferedInternalStorage.getAll().forEach(resource ->
                 available.put(resource, available.getOrDefault(resource, 0L) + bufferedInternalStorage.get(resource)));
-            for (final DispatchedSubTask subTask : activeSubTasks.values()) {
-                consume(subTask.requirements(), available);
-            }
             return available;
         }
 
@@ -595,8 +602,8 @@ public final class TaskDispatcher {
 
         private long getActiveInternalStorage(final ResourceKey resource) {
             long amount = 0;
-            for (final DispatchedSubTask subTask : activeSubTasks.values()) {
-                amount += subTask.task().createSnapshot().copyInternalStorage().get(resource);
+            for (final StepExecution stepExecution : activeSteps.values()) {
+                amount += stepExecution.internalStorage.get(resource);
             }
             return amount;
         }
@@ -634,10 +641,9 @@ public final class TaskDispatcher {
             return requirements;
         }
 
-        private record DispatchedSubTask(TaskImpl task, Map<ResourceKey, Long> requirements, boolean root) {
-        }
-
-        private record SeededSubTask(TaskImpl task, Map<ResourceKey, Long> remainingRequirements) {
+        private record StepExecution(Map<Pattern, AbstractTaskPattern> patterns,
+                                     MutableResourceList initialRequirements,
+                                     MutableResourceList internalStorage) {
         }
     }
 

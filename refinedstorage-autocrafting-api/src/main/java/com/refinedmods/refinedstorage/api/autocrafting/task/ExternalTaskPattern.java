@@ -62,10 +62,10 @@ class ExternalTaskPattern extends AbstractTaskPattern {
     }
 
     @Override
-    PatternStepResult step(final MutableResourceList internalStorage,
-                           final RootStorage rootStorage,
-                           final ExternalPatternSinkProvider sinkProvider,
-                           final TaskListener listener) {
+    public PatternStepResult step(final MutableResourceList internalStorage,
+                                  final RootStorage rootStorage,
+                                  final ExternalPatternSinkProvider sinkProvider,
+                                  final TaskListener listener) {
         if (interceptedAnIterationAtLeastOnceSinceLastStep) {
             interceptedAnIterationAtLeastOnceSinceLastStep = false;
             listener.receivedExternalIteration(pattern);
@@ -94,7 +94,7 @@ class ExternalTaskPattern extends AbstractTaskPattern {
     }
 
     @Override
-    long beforeInsert(final ResourceKey resource, final long amount) {
+    public long beforeInsert(final ResourceKey resource, final long amount) {
         if (root) {
             return 0;
         }
@@ -102,7 +102,7 @@ class ExternalTaskPattern extends AbstractTaskPattern {
     }
 
     @Override
-    long afterInsert(final ResourceKey resource, final long amount) {
+    public long afterInsert(final ResourceKey resource, final long amount) {
         if (!root) {
             return 0;
         }
@@ -141,7 +141,7 @@ class ExternalTaskPattern extends AbstractTaskPattern {
     }
 
     @Override
-    void appendStatus(final TaskStatusBuilder builder) {
+    public void appendStatus(final TaskStatusBuilder builder) {
         final List<ResourceAmount> outputs = pattern.layout().outputs();
         if (iterationsToSendToSink > 0) {
             for (final ResourceAmount output : outputs) {

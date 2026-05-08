@@ -1,6 +1,6 @@
 package com.refinedmods.refinedstorage.api.autocrafting.task;
 
-enum PatternStepResult {
+public enum PatternStepResult {
     COMPLETED,
     RUNNING,
     IDLE;

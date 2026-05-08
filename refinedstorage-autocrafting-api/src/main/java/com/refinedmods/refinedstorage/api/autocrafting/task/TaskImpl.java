@@ -81,6 +81,11 @@ public class TaskImpl implements Task {
 
     private static AbstractTaskPattern createTaskPattern(final Pattern pattern,
                                                          final TaskPlan.PatternPlan patternPlan) {
+        return createTaskPatternInternal(pattern, patternPlan);
+    }
+
+    protected static AbstractTaskPattern createTaskPatternInternal(final Pattern pattern,
+                                                                    final TaskPlan.PatternPlan patternPlan) {
         return switch (pattern.layout().type()) {
             case INTERNAL -> new InternalTaskPattern(pattern, patternPlan);
             case EXTERNAL -> new ExternalTaskPattern(pattern, patternPlan);

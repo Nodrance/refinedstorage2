@@ -15,7 +15,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-abstract class AbstractTaskPattern {
+public abstract class AbstractTaskPattern {
     private static final Logger LOGGER = LoggerFactory.getLogger(AbstractTaskPattern.class);
 
     protected final boolean root;
@@ -31,14 +31,14 @@ abstract class AbstractTaskPattern {
         }
     }
 
-    abstract PatternStepResult step(MutableResourceList internalStorage,
-                                    RootStorage rootStorage,
-                                    ExternalPatternSinkProvider sinkProvider,
-                                    TaskListener listener);
+    public abstract PatternStepResult step(MutableResourceList internalStorage,
+                                           RootStorage rootStorage,
+                                           ExternalPatternSinkProvider sinkProvider,
+                                           TaskListener listener);
 
     abstract TaskSnapshot.PatternSnapshot createSnapshot();
 
-    abstract void appendStatus(TaskStatusBuilder builder);
+    public abstract void appendStatus(TaskStatusBuilder builder);
 
     abstract long getWeight();
 
@@ -94,11 +94,11 @@ abstract class AbstractTaskPattern {
         return needed == 0;
     }
 
-    long beforeInsert(final ResourceKey resource, final long amount) {
+    public long beforeInsert(final ResourceKey resource, final long amount) {
         return 0;
     }
 
-    long afterInsert(final ResourceKey resource, final long amount) {
+    public long afterInsert(final ResourceKey resource, final long amount) {
         return 0;
     }
 }
