@@ -643,6 +643,29 @@ public final class CraftingInitializer {
         return new RecipeApplicationPath(decodedSet, decodedSteps);
     }
 
+    private static DesanitizedRecipeApplicationPath desanitizeRecipeApplicationPathToDesanitized(
+        final RecipeApplicationPath path,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
+        final CancellationToken cancellationToken
+    ) {
+        LOGGER.info("[LPT] Entering desanitizeRecipeApplicationPathToDesanitized()");
+
+        final List<DesanitizedRecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanStepsToDesanitized(
+            path.steps(),
+            sanitizedStartingResources,
+            cancellationToken
+        );
+
+        final RecipeApplicationSet original = path.applicationSet();
+        final DesanitizedRecipeApplicationSet decodedSet = RecipeDesanitizer.convertToDesanitized(
+            original,
+            sanitizedStartingResources,
+            cancellationToken
+        );
+
+        return new DesanitizedRecipeApplicationPath(decodedSet, decodedSteps);
+    }
+
     private static TreePreview buildTreePreviewFromPath(
         final ResourceKey resource,
         final long amount,
