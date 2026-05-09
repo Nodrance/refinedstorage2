@@ -8,12 +8,16 @@ import java.util.Objects;
 // If the the item is craftable, this represents what the crafter will actually do.
 public record RecipeApplicationPath(
     RecipeApplicationSet applicationSet,
-    List<RecipeApplicationStep> steps
+    List<RecipeApplicationStep> steps,
+    ResourcePool peakResourceUsage,
+    boolean hasCycles
 ) {
     public RecipeApplicationPath {
         Objects.requireNonNull(applicationSet, "applicationSet cannot be null");
         Objects.requireNonNull(steps, "steps cannot be null");
+        Objects.requireNonNull(peakResourceUsage, "peakResourceUsage cannot be null");
         steps = List.copyOf(steps);
+        peakResourceUsage = peakResourceUsage.copy();
     }
 }
 

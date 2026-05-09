@@ -73,7 +73,13 @@ public final class ExecutionPlanner {
             return Optional.empty();
         }
 
-        return Optional.of(new RecipeApplicationPath(applicationSet, steps));
+        final PlanningResult planningResult = postProcessPlan(steps, cancellationToken);
+        return Optional.of(new RecipeApplicationPath(
+            applicationSet,
+            planningResult.steps(),
+            planningResult.peakResourceUsage(),
+            planningResult.hasCycles()
+        ));
     }
 
     private static Optional<List<RecipeApplicationStep>> buildExecutableSteps(
@@ -357,6 +363,181 @@ public final class ExecutionPlanner {
         plan.set(plan.size() - 1, new RecipeApplicationStep(recipe, last.timesApplied() - batch));
     }
 
+    private static PlanningResult postProcessPlan(
+        final List<RecipeApplicationStep> steps,
+        final CancellationToken cancellationToken
+    ) {
+        final boolean cyclesExist = hasRecipeCycles(steps);
+        if (!cyclesExist) {
+            return new PlanningResult(List.copyOf(steps), ResourcePool.empty(), false);
+        }
+        final List<RecipeApplicationStep> reorderedSteps = reorderCyclicSteps(steps, cancellationToken);
+        final ResourcePool peakResourceUsage = computePeakResourceUsage(reorderedSteps, cancellationToken);
+        return new PlanningResult(reorderedSteps, peakResourceUsage, true);
+    }
+
+    private static boolean hasRecipeCycles(final List<RecipeApplicationStep> steps) {
+        return true; // debug to test cyclic path handling
+        // final Map<UUID, SanitizedRecipe> recipesById = new LinkedHashMap<>();
+        // for (final RecipeApplicationStep step : steps) {
+        //     recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
+        // }
+        // return !RecipeAnalyzer.detectRecipeCycles(new ArrayList<>(recipesById.values())).cycles().isEmpty();
+    }
+
+    private static List<RecipeApplicationStep> reorderCyclicSteps(
+        final List<RecipeApplicationStep> steps,
+        final CancellationToken cancellationToken
+    ) {
+        final List<RecipeApplicationStep> remaining = new ArrayList<>(steps);
+        final List<RecipeApplicationStep> reordered = new ArrayList<>(steps.size());
+        final ResourcePool craftedBalance = ResourcePool.empty();
+        final ResourcePool remainingProduction = computeRemainingProduction(remaining);
+
+        while (!remaining.isEmpty()) {
+            throwIfCancelled(cancellationToken);
+            final int nextIndex = selectNextStepIndex(remaining, remainingProduction, craftedBalance, cancellationToken);
+            final RecipeApplicationStep next = remaining.remove(nextIndex);
+            subtractProducedOutputs(remainingProduction, next);
+            reordered.add(next);
+            applyStepToBalance(next, craftedBalance);
+        }
+
+        return List.copyOf(reordered);
+    }
+
+    private static int selectNextStepIndex(
+        final List<RecipeApplicationStep> remaining,
+        final ResourcePool remainingProduction,
+        final ResourcePool craftedBalance,
+        final CancellationToken cancellationToken
+    ) {
+        int bestReadyIndex = -1;
+        long bestReadyExternalIncrease = Long.MAX_VALUE;
+        int bestFallbackIndex = 0;
+        long bestFallbackExternalIncrease = Long.MAX_VALUE;
+
+        for (int index = 0; index < remaining.size(); index++) {
+            throwIfCancelled(cancellationToken);
+            final RecipeApplicationStep step = remaining.get(index);
+            final long externalIncrease = computeExternalIncrease(step, craftedBalance);
+
+            if (externalIncrease < bestFallbackExternalIncrease) {
+                bestFallbackExternalIncrease = externalIncrease;
+                bestFallbackIndex = index;
+            }
+
+            if (!isReadyStep(step, craftedBalance, remainingProduction)) {
+                continue;
+            }
+            if (externalIncrease < bestReadyExternalIncrease) {
+                bestReadyExternalIncrease = externalIncrease;
+                bestReadyIndex = index;
+            }
+        }
+
+        return bestReadyIndex >= 0 ? bestReadyIndex : bestFallbackIndex;
+    }
+
+    private static boolean isReadyStep(
+        final RecipeApplicationStep step,
+        final ResourcePool craftedBalance,
+        final ResourcePool remainingProduction
+    ) {
+        for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().input()) {
+            final long needed = entry.getValue() * step.timesApplied();
+            if (needed <= 0) {
+                continue;
+            }
+            if (craftedBalance.getAmount(entry.getKey()) >= needed) {
+                continue;
+            }
+            final long futureProduction = remainingProduction.getAmount(entry.getKey())
+                - producedAmount(step, entry.getKey());
+            if (futureProduction > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static long computeExternalIncrease(
+        final RecipeApplicationStep step,
+        final ResourcePool craftedBalance
+    ) {
+        long totalIncrease = 0;
+        for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().input()) {
+            final long required = entry.getValue() * step.timesApplied();
+            if (required <= 0) {
+                continue;
+            }
+            final long currentBalance = craftedBalance.getAmount(entry.getKey());
+            final long currentNeed = Math.max(0L, -currentBalance);
+            final long newNeed = Math.max(0L, -(currentBalance - required));
+            totalIncrease += Math.max(0L, newNeed - currentNeed);
+        }
+        return totalIncrease;
+    }
+
+    private static ResourcePool computePeakResourceUsage(
+        final List<RecipeApplicationStep> steps,
+        final CancellationToken cancellationToken
+    ) {
+        final ResourcePool balance = ResourcePool.empty();
+        final ResourcePool peakUsage = ResourcePool.empty();
+        for (final RecipeApplicationStep step : steps) {
+            throwIfCancelled(cancellationToken);
+            for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().input()) {
+                final long required = entry.getValue() * step.timesApplied();
+                if (required <= 0) {
+                    continue;
+                }
+                final long updatedBalance = balance.getAmount(entry.getKey()) - required;
+                balance.setAmount(entry.getKey(), updatedBalance);
+                peakUsage.setAmount(entry.getKey(), Math.max(peakUsage.getAmount(entry.getKey()), Math.max(0L, -updatedBalance)));
+            }
+            for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().output()) {
+                balance.addAmount(entry.getKey(), entry.getValue() * step.timesApplied());
+            }
+        }
+        return peakUsage;
+    }
+
+    private static ResourcePool computeRemainingProduction(final List<RecipeApplicationStep> steps) {
+        final ResourcePool remainingProduction = ResourcePool.empty();
+        for (final RecipeApplicationStep step : steps) {
+            for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().output()) {
+                remainingProduction.addAmount(entry.getKey(), entry.getValue() * step.timesApplied());
+            }
+        }
+        return remainingProduction;
+    }
+
+    private static void subtractProducedOutputs(final ResourcePool remainingProduction, final RecipeApplicationStep step) {
+        for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().output()) {
+            remainingProduction.subtractAmount(entry.getKey(), entry.getValue() * step.timesApplied());
+        }
+    }
+
+    private static void applyStepToBalance(final RecipeApplicationStep step, final ResourcePool balance) {
+        for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().input()) {
+            balance.subtractAmount(entry.getKey(), entry.getValue() * step.timesApplied());
+        }
+        for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().output()) {
+            balance.addAmount(entry.getKey(), entry.getValue() * step.timesApplied());
+        }
+    }
+
+    private static long producedAmount(final RecipeApplicationStep step, final MultiResourceKey resourceKey) {
+        long amount = 0;
+        for (final Map.Entry<MultiResourceKey, Long> entry : step.recipe().output()) {
+            if (entry.getKey().equals(resourceKey)) {
+                amount += entry.getValue() * step.timesApplied();
+            }
+        }
+        return amount;
+    }
+
     private static void validateInputs(
         final List<SanitizedRecipe> recipes,
         final Map<UUID, Long> recipeValues,
@@ -375,6 +556,9 @@ public final class ExecutionPlanner {
         if (cancellationToken.isCancelled()) {
             throw new java.util.concurrent.CancellationException("LP execution planner cancelled");
         }
+    }
+
+    private record PlanningResult(List<RecipeApplicationStep> steps, ResourcePool peakResourceUsage, boolean hasCycles) {
     }
 
     private record Candidate(SanitizedRecipe recipe, long remaining, long maxBatch) {

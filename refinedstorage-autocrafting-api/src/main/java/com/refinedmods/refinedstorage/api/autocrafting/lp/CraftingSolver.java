@@ -518,7 +518,7 @@ public final class CraftingSolver {
                     .sorted(Comparator.comparing(Object::toString))
                     .toList()
             );
-            return Optional.of(new RecipeApplicationPath(applicationSet, List.of()));
+            return Optional.of(new RecipeApplicationPath(applicationSet, List.of(), ResourcePool.empty(), false));
         }
 
         final LinearSolver.Result solution = deficitAnalysis.solution().get();
