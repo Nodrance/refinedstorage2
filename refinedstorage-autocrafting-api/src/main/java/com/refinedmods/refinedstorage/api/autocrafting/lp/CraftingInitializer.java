@@ -101,12 +101,12 @@ public final class CraftingInitializer {
         // relevantResources.add(targetResource);
 
         LOGGER.debug("[LPT] Building relevant starting resources");
-        final ResourcePool relevantStartingResources = buildRelevantStartingResources(
+        final ResourcePool relevantStartingResources = RecipeSanitizer.buildRelevantStartingResources(
             rootStorage,
             relevantResources
         );
         LOGGER.debug("[LPT] Building sanitized starting resources");
-        final Map<ResourceKey, Long> sanitizedStartingResources = buildSanitizedStartingResources(
+        final Map<ResourceKey, Long> sanitizedStartingResources = RecipeSanitizer.buildSanitizedStartingResources(
             rootStorage,
             relevantResources
         );
@@ -201,7 +201,7 @@ public final class CraftingInitializer {
                 initialization.sanitizedRecipes(),
                 initialization.relevantStartingResources(),
                 initialization.target()
-            ).map(path -> desanitizeRecipeApplicationPath(
+            ).map(path -> RecipeDesanitizer.decodeRecipeApplicationPath(
                 path,
                 initialization.sanitizedStartingResources(),
                 cancellationToken
@@ -614,71 +614,6 @@ public final class CraftingInitializer {
         return buildFallbackTreePreview(resource, amount, preview, initialization.relevantPatterns());
     }
 
-    private static RecipeApplicationPath desanitizeRecipeApplicationPath(
-        final RecipeApplicationPath path,
-        final Map<ResourceKey, Long> sanitizedStartingResources,
-        final CancellationToken cancellationToken
-    ) {
-        LOGGER.debug("[LPT] Entering desanitizeRecipeApplicationPath()");
-
-        final List<RecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanSteps(
-            path.steps(),
-            sanitizedStartingResources,
-            cancellationToken
-        );
-
-        final RecipeApplicationSet original = path.applicationSet();
-        final ResourcePool decodedUsed = RecipeDesanitizer.decodeSanitizedResourcePool(
-            original.usedResources(),
-            sanitizedStartingResources,
-            cancellationToken
-        );
-        final ResourcePool decodedMissing = RecipeDesanitizer.decodeSanitizedResources(
-            original.missingResources(),
-            original.usedResources(),
-            cancellationToken
-        );
-        final ResourcePool decodedFinal = RecipeDesanitizer.decodeSanitizedResources(
-            original.finalInventoryValues(),
-            original.usedResources(),
-            cancellationToken
-        );
-
-        final RecipeApplicationSet decodedSet = new RecipeApplicationSet(
-            original.recipes(),
-            original.recipeValues(),
-            decodedUsed,
-            decodedFinal,
-            decodedMissing,
-            original.relevantResourceKeys()
-        );
-
-        return new RecipeApplicationPath(decodedSet, decodedSteps);
-    }
-
-    private static DesanitizedRecipeApplicationPath desanitizeRecipeApplicationPathToDesanitized(
-        final RecipeApplicationPath path,
-        final Map<ResourceKey, Long> sanitizedStartingResources,
-        final CancellationToken cancellationToken
-    ) {
-        LOGGER.info("[LPT] Entering desanitizeRecipeApplicationPathToDesanitized()");
-
-        final List<DesanitizedRecipeApplicationStep> decodedSteps = RecipeDesanitizer.decodePlanStepsToDesanitized(
-            path.steps(),
-            sanitizedStartingResources,
-            cancellationToken
-        );
-
-        final RecipeApplicationSet original = path.applicationSet();
-        final DesanitizedRecipeApplicationSet decodedSet = RecipeDesanitizer.convertToDesanitized(
-            original,
-            sanitizedStartingResources,
-            cancellationToken
-        );
-
-        return new DesanitizedRecipeApplicationPath(decodedSet, decodedSteps);
-    }
-
     private static TreePreview buildTreePreviewFromPath(
         final ResourceKey resource,
         final long amount,
@@ -738,7 +673,7 @@ public final class CraftingInitializer {
                 node.toCraft += craftedAmount;
 
                 for (final var input : step.recipe().input()) {
-                    final ResourceKey inputResource = toSanitizedResourceKey(input.getKey());
+                    final ResourceKey inputResource = RecipeDesanitizer.toSanitizedResourceKey(input.getKey());
                     final long childAmount = input.getValue() * usedIterations;
                     if (childAmount <= 0) {
                         continue;
@@ -764,7 +699,7 @@ public final class CraftingInitializer {
         final Set<ResourceKey> producibleResources = new HashSet<>();
         for (final RecipeApplicationStep step : path.steps()) {
             for (final var output : step.recipe().output()) {
-                producibleResources.add(toSanitizedResourceKey(output.getKey()));
+                producibleResources.add(RecipeDesanitizer.toSanitizedResourceKey(output.getKey()));
             }
         }
 
@@ -1034,51 +969,6 @@ public final class CraftingInitializer {
 
     private static long getSanitizedAmount(final ResourcePool pool, final ResourceKey resource) {
         return pool.getAmount(new MultiResourceKey(List.of(resource)));
-    }
-
-    private static ResourceKey toSanitizedResourceKey(final MultiResourceKey key) {
-        if (!key.members().isEmpty()) {
-            return key.members().getFirst();
-        }
-        throw new IllegalStateException("MultiResourceKey has no members: " + key);
-    }
-
-    private static ResourcePool buildRelevantStartingResources(
-        final RootStorage rootStorage,
-        final Collection<MultiResourceKey> relevantResources
-    ) {
-        LOGGER.debug("[LPT] Entering buildRelevantStartingResources()");
-        final ResourcePool result = ResourcePool.empty();
-        final Set<MultiResourceKey> processedMultiResourceKeys = new LinkedHashSet<>();
-
-        for (final MultiResourceKey multiResourceKey : relevantResources) {
-            if (!processedMultiResourceKeys.add(multiResourceKey)) {
-                continue;
-            }
-
-            long total = 0L;
-            for (final ResourceKey member : multiResourceKey.members()) {
-                total += rootStorage.get(member);
-            }
-            if (total > 0L) {
-                result.setAmount(multiResourceKey, total);
-            }
-        }
-
-        return result;
-    }
-
-    private static Map<ResourceKey, Long> buildSanitizedStartingResources(
-        final RootStorage rootStorage,
-        final Collection<MultiResourceKey> relevantResources
-    ) {
-        final Map<ResourceKey, Long> result = new LinkedHashMap<>();
-        for (final MultiResourceKey multiResourceKey : relevantResources) {
-            for (final ResourceKey member : multiResourceKey.members()) {
-                result.putIfAbsent(member, rootStorage.get(member));
-            }
-        }
-        return Map.copyOf(result);
     }
 
     private static void throwIfCancelled(final CancellationToken cancellationToken) {

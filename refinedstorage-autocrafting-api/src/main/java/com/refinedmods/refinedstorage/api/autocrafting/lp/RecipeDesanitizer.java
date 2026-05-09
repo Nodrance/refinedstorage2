@@ -221,6 +221,83 @@ public final class RecipeDesanitizer {
         return List.copyOf(decodedSteps);
     }
 
+    // Desanitizes an entire RecipeApplicationSet into concrete MRK(single member) resources.
+    public static RecipeApplicationSet decodeRecipeApplicationSet(
+        final RecipeApplicationSet applicationSet,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
+        final CancellationToken cancellationToken
+    ) {
+        Objects.requireNonNull(applicationSet, "applicationSet cannot be null");
+        Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        throwIfCancelled(cancellationToken);
+
+        final ResourcePool decodedUsed = decodeSanitizedResourcePool(
+            applicationSet.usedResources(),
+            sanitizedStartingResources,
+            cancellationToken
+        );
+        final ResourcePool decodedMissing = decodeSanitizedResources(
+            applicationSet.missingResources(),
+            applicationSet.usedResources(),
+            cancellationToken
+        );
+        final ResourcePool decodedFinal = decodeSanitizedResources(
+            applicationSet.finalInventoryValues(),
+            applicationSet.usedResources(),
+            cancellationToken
+        );
+
+        return new RecipeApplicationSet(
+            applicationSet.recipes(),
+            applicationSet.recipeValues(),
+            decodedUsed,
+            decodedFinal,
+            decodedMissing,
+            applicationSet.relevantResourceKeys()
+        );
+    }
+
+    // Desanitizes an entire RecipeApplicationPath into concrete steps/set/peak usage.
+    public static RecipeApplicationPath decodeRecipeApplicationPath(
+        final RecipeApplicationPath path,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
+        final CancellationToken cancellationToken
+    ) {
+        Objects.requireNonNull(path, "path cannot be null");
+        Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        throwIfCancelled(cancellationToken);
+
+        final List<RecipeApplicationStep> decodedSteps = decodePlanSteps(
+            path.steps(),
+            sanitizedStartingResources,
+            cancellationToken
+        );
+        final RecipeApplicationSet decodedSet = decodeRecipeApplicationSet(
+            path.applicationSet(),
+            sanitizedStartingResources,
+            cancellationToken
+        );
+        final ResourcePool decodedPeakUsage = decodeSanitizedResourcePool(
+            path.peakResourceUsage(),
+            sanitizedStartingResources,
+            cancellationToken
+        );
+
+        return new RecipeApplicationPath(decodedSet, decodedSteps, decodedPeakUsage, path.hasCycles());
+    }
+
+    // Converts an LP MultiResourceKey to a single RS ResourceKey by extracting the first member.
+    // Used throughout LP code to convert from MRK-based resource references to single ResourceKey references.
+    public static ResourceKey toSanitizedResourceKey(final MultiResourceKey resourceKey) {
+        Objects.requireNonNull(resourceKey, "resourceKey cannot be null");
+        if (!resourceKey.members().isEmpty()) {
+            return resourceKey.members().getFirst();
+        }
+        throw new IllegalStateException("MultiResourceKey has no members: " + resourceKey);
+    }
+
     private static ResourceKey firstMemberOf(final MultiResourceKey multiResourceKey) {
         if (!multiResourceKey.members().isEmpty()) {
             return multiResourceKey.members().getFirst();

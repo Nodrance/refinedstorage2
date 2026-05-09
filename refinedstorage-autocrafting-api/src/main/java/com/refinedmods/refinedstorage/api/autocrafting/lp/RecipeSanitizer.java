@@ -5,10 +5,12 @@ import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
+import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -301,6 +303,47 @@ public class RecipeSanitizer {
             }
         }
         return map;
+    }
+
+    // Converts RS types (RootStorage with ResourceKeys) to LP types (ResourcePool with MRKs).
+    // Aggregates resource amounts by their corresponding MultiResourceKey grouping.
+    public static ResourcePool buildRelevantStartingResources(
+        final RootStorage rootStorage,
+        final Collection<MultiResourceKey> relevantResources
+    ) {
+        final ResourcePool result = ResourcePool.empty();
+        final Set<MultiResourceKey> processedMultiResourceKeys = new LinkedHashSet<>();
+
+        for (final MultiResourceKey multiResourceKey : relevantResources) {
+            if (!processedMultiResourceKeys.add(multiResourceKey)) {
+                continue;
+            }
+
+            long total = 0L;
+            for (final ResourceKey member : multiResourceKey.members()) {
+                total += rootStorage.get(member);
+            }
+            if (total > 0L) {
+                result.setAmount(multiResourceKey, total);
+            }
+        }
+
+        return result;
+    }
+
+    // Converts RS types (RootStorage with ResourceKeys and MRK groupings) to a mapping table.
+    // Each distinct ResourceKey member gets mapped to its amount in storage.
+    public static Map<ResourceKey, Long> buildSanitizedStartingResources(
+        final RootStorage rootStorage,
+        final Collection<MultiResourceKey> relevantResources
+    ) {
+        final Map<ResourceKey, Long> result = new LinkedHashMap<>();
+        for (final MultiResourceKey multiResourceKey : relevantResources) {
+            for (final ResourceKey member : multiResourceKey.members()) {
+                result.putIfAbsent(member, rootStorage.get(member));
+            }
+        }
+        return Map.copyOf(result);
     }
 
     public record MultiResourceKeyIndex(
