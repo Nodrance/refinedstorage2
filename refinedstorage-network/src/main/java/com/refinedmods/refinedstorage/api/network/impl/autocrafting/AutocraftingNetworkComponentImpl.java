@@ -155,7 +155,6 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
     }
 
     boolean shouldUseLinearAutocraftingSystem() {
-        // return true;
         return AutocraftingModeContext.isUseLinearAutocraftingSystem();
     }
 

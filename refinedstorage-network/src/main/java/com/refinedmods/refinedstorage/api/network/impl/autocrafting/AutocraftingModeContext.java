@@ -9,7 +9,8 @@ public final class AutocraftingModeContext {
     }
 
     public static boolean isUseLinearAutocraftingSystem() {
-        return USE_LINEAR_AUTOCRAFTING_SYSTEM.get() != null && USE_LINEAR_AUTOCRAFTING_SYSTEM.get();
+        final Boolean useLinearAutocraftingSystem = USE_LINEAR_AUTOCRAFTING_SYSTEM.get();
+        return useLinearAutocraftingSystem == null || useLinearAutocraftingSystem;
     }
 
     public static <T> T withUseLinearAutocraftingSystem(final boolean useLinearAutocraftingSystem,
