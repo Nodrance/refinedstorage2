@@ -26,28 +26,31 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 final class CyclicTaskImpl extends TaskImpl {
     private static final Logger LOGGER = LoggerFactory.getLogger(CyclicTaskImpl.class);
-    
+
     private final long startTime;
-    private final int totalSteps;
-    private final List<RecipeApplicationStep> pendingSteps;
-    private final Map<UUID, Pattern> patternsById;
-    private final Pattern rootPattern;
-    private final ResourcePool peakResourceUsage;
-    private final MutableResourceList bufferedInternalStorage = MutableResourceListImpl.create();
-    private final Map<Integer, StepExecution> activeSteps = new LinkedHashMap<>();
-    private final Predicate<Pattern> hasProvider;
+    private final MutableResourceList initialRequirements = MutableResourceListImpl.create();
+    private final MutableResourceList internalStorage = MutableResourceListImpl.create();
+    private final Map<Pattern, AbstractTaskPattern> activePatterns;
+    private final List<AbstractTaskPattern> completedPatterns = new ArrayList<>();
+    private final List<Pattern> plannerPatternOrder;
+    private final Map<Pattern, Integer> plannerOverrideRemainingSteps;
+    private final Map<Pattern, Set<ResourceKey>> consumedResourcesByPattern;
+    private final Map<Pattern, Integer> cycleSafeStepBudgets = new LinkedHashMap<>();
+
     private TaskState state = TaskState.READY;
     private boolean cancelled;
+    private boolean queueDirty = true;
 
-    // Different from TaskImpl constructors: this one initializes LP-specific cyclic runtime state.
     CyclicTaskImpl(final ResourceKey resource,
                    final long amount,
                    final Actor actor,
@@ -58,96 +61,83 @@ final class CyclicTaskImpl extends TaskImpl {
                    final Predicate<Pattern> hasProvider) {
         super(TaskDispatcher.createCyclicTaskPlan(resource, amount, rootPattern), actor, notify);
         this.startTime = System.currentTimeMillis();
-        this.pendingSteps = new ArrayList<>(path.steps());
-        this.totalSteps = path.steps().size();
-        this.patternsById = Map.copyOf(patternsById);
-        this.rootPattern = rootPattern;
-        this.peakResourceUsage = path.peakResourceUsage().copy();
-        this.hasProvider = hasProvider;
+
+        final CyclicMergedPlan mergedPlan = toMergedPlan(resource, amount, path.steps(), patternsById, rootPattern);
+        mergedPlan.initialRequirements().forEach(initialRequirements::add);
+        this.plannerOverrideRemainingSteps = new HashMap<>(mergedPlan.plannerOverrideInitialSteps());
+        this.consumedResourcesByPattern = mergedPlan.consumedResourcesByPattern();
+        this.activePatterns = mergedPlan.patternPlans().entrySet().stream().collect(Collectors.toMap(
+            Map.Entry::getKey,
+            e -> TaskImpl.createTaskPatternInternal(e.getKey(), e.getValue()),
+            (a, b) -> a,
+            LinkedHashMap::new
+        ));
+
+        final LinkedHashSet<Pattern> order = new LinkedHashSet<>();
+        for (final RecipeApplicationStep step : path.steps()) {
+            final Pattern pattern = TaskDispatcher.requirePattern(step.recipe(), patternsById);
+            if (activePatterns.containsKey(pattern)) {
+                order.add(pattern);
+            }
+        }
+        this.plannerPatternOrder = List.copyOf(order);
     }
 
-    // Same as TaskImpl: exposes the current state for the task lifecycle.
     @Override
     public TaskState getState() {
         return state;
     }
 
-    // Different from TaskImpl: local state writer because CyclicTaskImpl keeps its own state field.
-    private void updateState(final TaskState newState) {
+    @Override
+    public boolean shouldNotify() {
+        return super.shouldNotify() && !cancelled;
+    }
+
+    @Override
+    protected void updateState(final TaskState newState) {
+        LOGGER.debug("Task {} state changed from {} to {}", getId().id(), state, newState);
         this.state = newState;
     }
 
-    // Different from TaskImpl: same state machine shape, but READY/EXTRACTING funnel directly into cyclic staged stepping.
     @Override
     public boolean step(final RootStorage rootStorage,
                         final ExternalPatternSinkProvider sinkProvider,
                         final StepBehavior stepBehavior,
                         final TaskListener listener) {
         return switch (state) {
-            case READY -> startTask(rootStorage, sinkProvider, stepBehavior, listener);
-            case EXTRACTING_INITIAL_RESOURCES -> extractInitialResourcesAndTryStartRunningTask(
-                rootStorage,
-                sinkProvider,
-                stepBehavior,
-                listener
-            );
+            case READY -> startTask(rootStorage);
+            case EXTRACTING_INITIAL_RESOURCES -> extractInitialResourcesAndTryStartRunningTask(rootStorage);
             case RUNNING -> stepPatterns(rootStorage, sinkProvider, stepBehavior, listener);
             case RETURNING_INTERNAL_STORAGE -> returnInternalStorageAndTryCompleteTask(rootStorage);
             case COMPLETED -> false;
         };
     }
 
-    // Same as TaskImpl: delegate to base cancel behavior and mark this task as cancelled.
     @Override
     public void cancel() {
-        super.cancel();
+        updateState(TaskState.RETURNING_INTERNAL_STORAGE);
         cancelled = true;
     }
 
-    // Different from TaskImpl: reports progress/status over dynamic pending/active cyclic step executions.
     @Override
     public TaskStatus getStatus() {
-        final TaskStatusBuilder builder = new TaskStatusBuilder(
-            getId(),
-            state,
-            getResource(),
-            getAmount(),
-            startTime
+        final TaskStatusBuilder builder = new TaskStatusBuilder(getId(), state, getResource(), getAmount(), startTime);
+        initialRequirements.getAll().forEach(
+            requiredResource -> builder.extracting(requiredResource, initialRequirements.get(requiredResource))
         );
-        if (!pendingSteps.isEmpty() || !activeSteps.isEmpty()) {
-            builder.processing(getResource(), Math.max(1, activeSteps.size() + pendingSteps.size()), null);
-        }
-        
-        // Append status from all active step patterns
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            for (final AbstractTaskPattern pattern : stepExecution.patterns.values()) {
-                pattern.appendStatus(builder);
-            }
-        }
-        
-        // Add buffered internal storage
-        bufferedInternalStorage.getAll().forEach(resource ->
-            builder.stored(resource, bufferedInternalStorage.get(resource)));
 
+        for (final AbstractTaskPattern pattern : activePatterns.values()) {
+            pattern.appendStatus(builder);
+        }
+
+        internalStorage.getAll().forEach(
+            internalResource -> builder.stored(internalResource, internalStorage.get(internalResource))
+        );
         return builder.build(progress());
     }
 
-    // Different from TaskImpl: snapshot stores cyclic runtime queues/buffers instead of static plan/completed-pattern snapshots.
     @Override
     public TaskSnapshot createSnapshot() {
-        final MutableResourceList allInternalStorage = MutableResourceListImpl.create();
-        final MutableResourceList allInitialRequirements = MutableResourceListImpl.create();
-
-        bufferedInternalStorage.getAll().forEach(resource ->
-            allInternalStorage.add(resource, bufferedInternalStorage.get(resource)));
-
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            stepExecution.internalStorage.getAll().forEach(resource ->
-                allInternalStorage.add(resource, stepExecution.internalStorage.get(resource)));
-            stepExecution.initialRequirements.getAll().forEach(resource ->
-                allInitialRequirements.add(resource, stepExecution.initialRequirements.get(resource)));
-        }
-
         return new TaskSnapshot(
             getId(),
             getResource(),
@@ -157,426 +147,509 @@ final class CyclicTaskImpl extends TaskImpl {
             startTime,
             Map.of(),
             List.of(),
-            allInitialRequirements.copy(),
-            allInternalStorage.copy(),
+            initialRequirements.copy(),
+            internalStorage.copy(),
             state,
             cancelled
         );
     }
 
-    // Different from TaskImpl: pulls peak resources upfront, then transitions into cyclic RUNNING staged execution.
-    // Like TaskImpl.startTask, does NOT step patterns — stepping happens on the next doWork() call.
-    private boolean startTask(final RootStorage rootStorage,
-                              final ExternalPatternSinkProvider sinkProvider,
-                              final StepBehavior stepBehavior,
-                              final TaskListener listener) {
-        pullPeakResources(rootStorage);
-        updateState(TaskState.RUNNING);
-        return !bufferedInternalStorage.isEmpty();
+    private boolean startTask(final RootStorage rootStorage) {
+        updateState(TaskState.EXTRACTING_INITIAL_RESOURCES);
+        return extractInitialResourcesAndTryStartRunningTask(rootStorage);
     }
-    
-    // Different from TaskImpl: pulls max required resources upfront based on peak resource usage computation.
-    private void pullPeakResources(final RootStorage rootStorage) {
-        for (final var entry : peakResourceUsage.asMap().entrySet()) {
-            final MultiResourceKey multiKey = entry.getKey();
-            final long needed = entry.getValue();
-            final ResourceKey resource = RecipeDesanitizer.toSanitizedResourceKey(multiKey);
-            final long extracted = rootStorage.extract(resource, needed, Action.EXECUTE, Actor.EMPTY);
+
+    private boolean extractInitialResourcesAndTryStartRunningTask(final RootStorage rootStorage) {
+        boolean extractedAll = true;
+        boolean extractedAny = false;
+        final Set<ResourceKey> initialRequirementResources = new HashSet<>(initialRequirements.getAll());
+        for (final ResourceKey initialRequirementResource : initialRequirementResources) {
+            final long needed = initialRequirements.get(initialRequirementResource);
+            final long extracted = rootStorage.extract(initialRequirementResource, needed, Action.EXECUTE, Actor.EMPTY);
             if (extracted > 0) {
-                bufferedInternalStorage.add(resource, extracted);
-                LOGGER.debug("Pulled {}x {} for cyclic task", extracted, resource);
+                extractedAny = true;
             }
-            if (extracted < needed) {
-                LOGGER.debug("Could not pull full amount: requested {}x {}, got {}x {}", 
-                    needed, resource, extracted, resource);
+            LOGGER.debug("Extracted {}x {} from storage", extracted, initialRequirementResource);
+            if (extracted != needed) {
+                extractedAll = false;
+            }
+            if (extracted > 0) {
+                initialRequirements.remove(initialRequirementResource, extracted);
+                internalStorage.add(initialRequirementResource, extracted);
             }
         }
+        if (extractedAll) {
+            updateState(TaskState.RUNNING);
+            queueDirty = true;
+            // Prime cycle-safety before the first RUNNING tick to avoid one-step lag.
+            recalculateStepSafeQueue();
+        }
+        return extractedAny;
     }
 
-    // Different from TaskImpl: cyclic mode does not perform a separate upfront extraction phase.
-    private boolean extractInitialResourcesAndTryStartRunningTask(final RootStorage rootStorage,
-                                                                  final ExternalPatternSinkProvider sinkProvider,
-                                                                  final StepBehavior stepBehavior,
-                                                                  final TaskListener listener) {
-        updateState(TaskState.RUNNING);
-        return true;
-    }
-
-    // Different from TaskImpl: dispatches one next fragment (serialized), then steps all active patterns once.
-    // Like TaskImpl, each doWork() call steps patterns exactly once.
     private boolean stepPatterns(final RootStorage rootStorage,
                                  final ExternalPatternSinkProvider sinkProvider,
                                  final StepBehavior stepBehavior,
                                  final TaskListener listener) {
-        boolean changed = pruneCompletedSteps();
+        if (queueDirty || cycleSafeStepBudgets.isEmpty()) {
+            recalculateStepSafeQueue();
+        }
 
-        if (cancelled) {
-            changed |= clearActiveSteps();
-            if (!bufferedInternalStorage.isEmpty()) {
+        boolean changed = false;
+        final var it = activePatterns.entrySet().iterator();
+        while (it.hasNext()) {
+            final var entry = it.next();
+            final Pattern pattern = entry.getKey();
+            final int budget = cycleSafeStepBudgets.getOrDefault(pattern, 0);
+            if (budget <= 0) {
+                continue;
+            }
+
+            final StepExecutionResult executionResult = stepPattern(
+                rootStorage,
+                sinkProvider,
+                stepBehavior,
+                listener,
+                pattern,
+                entry.getValue()
+            );
+
+            consumeStepBudget(pattern, executionResult.executedSteps());
+
+            if (executionResult.result() == PatternStepResult.COMPLETED) {
+                it.remove();
+                cycleSafeStepBudgets.remove(pattern);
+                plannerOverrideRemainingSteps.remove(pattern);
+                completedPatterns.add(entry.getValue());
+                queueDirty = true;
+                changed = true;
+            } else {
+                changed |= executionResult.result() != PatternStepResult.IDLE;
+            }
+        }
+
+        if (activePatterns.isEmpty()) {
+            if (internalStorage.isEmpty()) {
+                updateState(TaskState.COMPLETED);
+            } else {
                 updateState(TaskState.RETURNING_INTERNAL_STORAGE);
-                return true;
-            }
-            updateState(TaskState.COMPLETED);
-            return true;
-        }
-
-        // Dispatch the next pending step when no active steps remain (serialized to preserve LP ordering).
-        changed |= dispatchNextStep(rootStorage);
-
-        // Step all active patterns once — mirrors TaskImpl's single-step-per-doWork contract.
-        changed |= stepActivePatterns(rootStorage, sinkProvider, stepBehavior, listener);
-
-        final boolean completedAnyStep = pruneCompletedSteps();
-        changed |= completedAnyStep;
-
-        // Mirror TaskImpl behavior: if a step completed in this tick, immediately dispatch and step
-        // the next step once in the same doWork() call.
-        if (completedAnyStep) {
-            final boolean dispatchedAnotherStep = dispatchNextStep(rootStorage);
-            changed |= dispatchedAnotherStep;
-            if (dispatchedAnotherStep) {
-                changed |= stepActivePatterns(rootStorage, sinkProvider, stepBehavior, listener);
-                changed |= pruneCompletedSteps();
             }
         }
-
-        if (pendingSteps.isEmpty() && activeSteps.isEmpty()) {
-            updateState(bufferedInternalStorage.isEmpty() ? TaskState.COMPLETED : TaskState.RETURNING_INTERNAL_STORAGE);
-            changed = true;
-        }
-
         return changed;
     }
 
-    // Different from TaskImpl: same stepping contract, but operates on a StepExecution-local internal storage buffer.
-    private PatternStepResult stepPattern(final RootStorage rootStorage,
-                                          final ExternalPatternSinkProvider sinkProvider,
-                                          final StepBehavior stepBehavior,
-                                          final TaskListener listener,
-                                          final StepExecution stepExecution,
-                                          final Map.Entry<Pattern, AbstractTaskPattern> pattern) {
+    private StepExecutionResult stepPattern(final RootStorage rootStorage,
+                                            final ExternalPatternSinkProvider sinkProvider,
+                                            final StepBehavior stepBehavior,
+                                            final TaskListener listener,
+                                            final Pattern pattern,
+                                            final AbstractTaskPattern taskPattern) {
         PatternStepResult result = PatternStepResult.IDLE;
-        if (!stepBehavior.canStep(pattern.getKey())) {
-            return result;
+        int executedSteps = 0;
+        if (!stepBehavior.canStep(pattern)) {
+            return new StepExecutionResult(result, executedSteps);
         }
-        final int steps = stepBehavior.getSteps(pattern.getKey());
+        final int steps = stepBehavior.getSteps(pattern);
         for (int i = 0; i < steps; ++i) {
-            final PatternStepResult stepResult = pattern.getValue().step(
-                stepExecution.internalStorage,
-                rootStorage,
-                sinkProvider,
-                listener
-            );
+            executedSteps++;
+            final PatternStepResult stepResult = taskPattern.step(internalStorage, rootStorage, sinkProvider, listener);
             if (stepResult == PatternStepResult.COMPLETED) {
-                return stepResult;
-            } else if (stepResult != PatternStepResult.IDLE) {
+                LOGGER.debug("{} completed", pattern);
+                return new StepExecutionResult(stepResult, executedSteps);
+            }
+            if (stepResult != PatternStepResult.IDLE) {
                 result = PatternStepResult.RUNNING;
             }
         }
-        return result;
+        return new StepExecutionResult(result, executedSteps);
     }
 
-    // Different from TaskImpl: returns the cyclic buffered internal storage pool, not TaskImpl's single internalStorage field.
     private boolean returnInternalStorageAndTryCompleteTask(final RootStorage rootStorage) {
-        boolean returnedAny = false;
         boolean returnedAll = true;
-        final Set<ResourceKey> resources = new HashSet<>(bufferedInternalStorage.getAll());
-        for (final ResourceKey resource : resources) {
-            final long amount = bufferedInternalStorage.get(resource);
-            final long inserted = rootStorage.insert(resource, amount, Action.EXECUTE, Actor.EMPTY);
+        boolean returnedAny = false;
+        final Set<ResourceKey> internalResources = new HashSet<>(internalStorage.getAll());
+        for (final ResourceKey internalResource : internalResources) {
+            final long internalAmount = internalStorage.get(internalResource);
+            final long inserted = rootStorage.insert(internalResource, internalAmount, Action.EXECUTE, Actor.EMPTY);
             if (inserted > 0) {
-                bufferedInternalStorage.remove(resource, inserted);
                 returnedAny = true;
             }
-            if (inserted != amount) {
+            LOGGER.debug("Returned {}x {} into storage", inserted, internalResource);
+            if (inserted != internalAmount) {
                 returnedAll = false;
+            }
+            if (inserted > 0) {
+                internalStorage.remove(internalResource, inserted);
             }
         }
         if (returnedAll) {
             updateState(TaskState.COMPLETED);
-            return true;
         }
         return returnedAny;
     }
 
-    // Different from TaskImpl: intercepts for active cyclic fragments and also buffers for pending cyclic demand.
     @Override
     public long beforeInsert(final ResourceKey insertedResource, final long insertedAmount) {
         if (cancelled) {
             return 0;
         }
-
         long intercepted = 0;
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            final long interceptedBeforeStep = intercepted;
-            for (final AbstractTaskPattern pattern : stepExecution.patterns.values()) {
-                final long available = insertedAmount - intercepted;
-                intercepted += pattern.beforeInsert(insertedResource, available);
-                if (intercepted == insertedAmount) {
-                    break;
-                }
-            }
-
-            final long interceptedByStep = intercepted - interceptedBeforeStep;
-            if (interceptedByStep > 0) {
-                bufferedInternalStorage.add(insertedResource, interceptedByStep);
-            }
+        for (final AbstractTaskPattern pattern : activePatterns.values()) {
+            final long available = insertedAmount - intercepted;
+            intercepted += pattern.beforeInsert(insertedResource, available);
             if (intercepted == insertedAmount) {
+                internalStorage.add(insertedResource, intercepted);
                 return intercepted;
             }
         }
-
-        final long remaining = insertedAmount - intercepted;
-        final long pendingNeed = getPendingRequirement(insertedResource)
-            - bufferedInternalStorage.get(insertedResource)
-            - getActiveInternalStorage(insertedResource);
-        if (remaining > 0 && pendingNeed > 0) {
-            final long buffered = Math.min(remaining, pendingNeed);
-            bufferedInternalStorage.add(insertedResource, buffered);
-            intercepted += buffered;
+        if (intercepted > 0) {
+            internalStorage.add(insertedResource, intercepted);
         }
         return intercepted;
     }
 
-    // Different from TaskImpl: reserves against active cyclic fragments instead of TaskImpl's static pattern set.
     @Override
     public long afterInsert(final ResourceKey insertedResource, final long insertedAmount) {
         long reserved = 0;
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            for (final AbstractTaskPattern pattern : stepExecution.patterns.values()) {
-                final long available = insertedAmount - reserved;
-                reserved += pattern.afterInsert(insertedResource, available);
-                if (reserved == insertedAmount) {
-                    return reserved;
-                }
+        for (final AbstractTaskPattern pattern : activePatterns.values()) {
+            final long available = insertedAmount - reserved;
+            reserved += pattern.afterInsert(insertedResource, available);
+            if (reserved == insertedAmount) {
+                return reserved;
             }
         }
         return reserved;
     }
 
-    // Same as TaskImpl: no-op listener hook.
     @Override
     public void changed(final MutableResourceList.OperationResult change) {
-        // no op
+        queueDirty = true;
     }
 
-    // Different from TaskImpl: progress is based on pending+active cyclic steps rather than weighted pattern completion.
     private double progress() {
-        if (totalSteps == 0) {
+        final int total = activePatterns.size() + completedPatterns.size();
+        if (total == 0) {
             return 1D;
         }
-        final int remaining = pendingSteps.size() + activeSteps.size();
-        final int done = Math.max(0, totalSteps - remaining);
-        return done / (double) totalSteps;
+        return completedPatterns.size() / (double) total;
     }
 
-    // Different from TaskImpl: computes availability including cyclic buffered storage reservations.
-    private Map<ResourceKey, Long> availableWithReservations(final RootStorage rootStorage) {
-        final Map<ResourceKey, Long> available = new HashMap<>();
-        for (final ResourceAmount resourceAmount : rootStorage.getAll()) {
-            available.put(resourceAmount.resource(), resourceAmount.amount());
-        }
-        bufferedInternalStorage.getAll().forEach(resource ->
-            available.put(resource, available.getOrDefault(resource, 0L) + bufferedInternalStorage.get(resource)));
-        return available;
-    }
+    private void recalculateStepSafeQueue() {
+        cycleSafeStepBudgets.clear();
 
-    // Different from TaskImpl: sums future LP step input demand for not-yet-dispatched cyclic steps.
-    private long getPendingRequirement(final ResourceKey resource) {
-        long amount = 0;
-        for (final RecipeApplicationStep step : pendingSteps) {
-            for (final var entry : step.recipe().input()) {
-                if (RecipeDesanitizer.toSanitizedResourceKey(entry.getKey()).equals(resource)) {
-                    amount += entry.getValue() * step.timesApplied();
+        final CycleSafetyState cycleSafetyState = buildCycleSafetyState();
+        final Pattern plannerOverridePattern = findPlannerOverridePattern();
+
+        for (final Pattern pattern : plannerPatternOrder) {
+            if (activePatterns.containsKey(pattern)) {
+                final int budget = computeStepBudget(pattern, plannerOverridePattern, cycleSafetyState);
+                if (budget > 0) {
+                    cycleSafeStepBudgets.put(pattern, budget);
                 }
             }
         }
-        return amount;
-    }
 
-    // Different from TaskImpl: sums internal storage across all active cyclic step executions.
-    private long getActiveInternalStorage(final ResourceKey resource) {
-        long amount = 0;
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            amount += stepExecution.internalStorage.get(resource);
-        }
-        return amount;
-    }
-
-    // Different from TaskImpl: steps pattern sets partitioned per active cyclic step execution.
-    private boolean stepActivePatterns(final RootStorage rootStorage,
-                                       final ExternalPatternSinkProvider sinkProvider,
-                                       final StepBehavior stepBehavior,
-                                       final TaskListener listener) {
-        boolean changed = false;
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            final var patternIt = stepExecution.patterns.entrySet().iterator();
-            while (patternIt.hasNext()) {
-                final var pattern = patternIt.next();
-                final PatternStepResult result = stepPattern(
-                    rootStorage,
-                    sinkProvider,
-                    stepBehavior,
-                    listener,
-                    stepExecution,
-                    pattern
-                );
-                if (result == PatternStepResult.COMPLETED) {
-                    patternIt.remove();
+        for (final Pattern pattern : activePatterns.keySet()) {
+            if (!cycleSafeStepBudgets.containsKey(pattern)) {
+                final int budget = computeStepBudget(pattern, plannerOverridePattern, cycleSafetyState);
+                if (budget > 0) {
+                    cycleSafeStepBudgets.put(pattern, budget);
                 }
-                changed |= result != PatternStepResult.IDLE;
             }
         }
-        return changed;
+
+        queueDirty = false;
     }
 
-    // Different from TaskImpl: prunes completed cyclic step executions and merges their internal storage into the cyclic buffer.
-    private boolean pruneCompletedSteps() {
-        boolean changed = false;
-        final var it = activeSteps.entrySet().iterator();
-        while (it.hasNext()) {
-            final var entry = it.next();
-            final StepExecution stepExecution = entry.getValue();
-            if (stepExecution.patterns.isEmpty()) {
-                stepExecution.internalStorage.getAll().forEach(resource ->
-                    bufferedInternalStorage.add(resource, stepExecution.internalStorage.get(resource)));
-                it.remove();
-                changed = true;
+    private int computeStepBudget(final Pattern pattern,
+                                  final Pattern plannerOverridePattern,
+                                  final CycleSafetyState cycleSafetyState) {
+        if (isUnlimitedCycleSafe(pattern, cycleSafetyState)) {
+            return Integer.MAX_VALUE;
+        }
+        if (pattern.equals(plannerOverridePattern)) {
+            return Math.max(0, plannerOverrideRemainingSteps.getOrDefault(pattern, 0));
+        }
+        return 0;
+    }
+
+    private boolean isUnlimitedCycleSafe(final Pattern pattern,
+                                         final CycleSafetyState cycleSafetyState) {
+        final Set<ResourceKey> consumed = consumedResourcesByPattern.getOrDefault(pattern, Set.of());
+        final Set<ResourceKey> conflictedConsumed = new HashSet<>();
+        for (final ResourceKey resource : consumed) {
+            if (cycleSafetyState.conflictedResources.contains(resource)) {
+                conflictedConsumed.add(resource);
             }
         }
-        return changed;
+
+        if (conflictedConsumed.isEmpty()) {
+            return true;
+        }
+
+        final Integer groupId = cycleSafetyState.cycleGroupByPattern.get(pattern);
+        if (groupId == null) {
+            return false;
+        }
+
+        final Set<ResourceKey> producedByGroup = cycleSafetyState.producedResourcesByCycleGroup
+            .getOrDefault(groupId, Set.of());
+        return producedByGroup.containsAll(conflictedConsumed);
     }
 
-    // Different from TaskImpl: drains active cyclic step storage into the shared buffer before cancellation cleanup.
-    private boolean clearActiveSteps() {
-        if (activeSteps.isEmpty()) {
-            return false;
+    private Pattern findPlannerOverridePattern() {
+        for (final Pattern pattern : plannerPatternOrder) {
+            if (!activePatterns.containsKey(pattern)) {
+                continue;
+            }
+            if (plannerOverrideRemainingSteps.getOrDefault(pattern, 0) > 0) {
+                return pattern;
+            }
         }
-        for (final StepExecution stepExecution : activeSteps.values()) {
-            stepExecution.internalStorage.getAll().forEach(resource ->
-                bufferedInternalStorage.add(resource, stepExecution.internalStorage.get(resource)));
-        }
-        activeSteps.clear();
-        return true;
+        return null;
     }
 
-    // Different from TaskImpl: dispatches at most one pending LP step chunk based on current availability.
-    private boolean dispatchNextStep(final RootStorage rootStorage) {
-        if (!activeSteps.isEmpty() || pendingSteps.isEmpty()) {
-            return false;
-        }
-
-        final RecipeApplicationStep next = pendingSteps.getFirst();
-        final Map<ResourceKey, Long> available = availableWithReservations(rootStorage);
-        final long dispatchIterations = maxDispatchableIterations(next, available);
-        if (dispatchIterations <= 0) {
-            return false;
-        }
-        final Map<ResourceKey, Long> requirements = stepRequirements(next, dispatchIterations);
-
-        if (!dispatchStepExecution(next, dispatchIterations, requirements, rootStorage)) {
-            return false;
-        }
-
-        updatePendingStepAfterDispatch(0, next, dispatchIterations);
-        return true;
-    }
-
-    // Different from TaskImpl: updates pending LP step iterations after partial cyclic dispatch.
-    private void updatePendingStepAfterDispatch(final int index,
-                                                final RecipeApplicationStep originalStep,
-                                                final long dispatchedIterations) {
-        final long remainingIterations = originalStep.timesApplied() - dispatchedIterations;
-        if (remainingIterations <= 0) {
-            pendingSteps.remove(index);
+    private void consumeStepBudget(final Pattern pattern,
+                                   final int executedSteps) {
+        if (executedSteps <= 0) {
             return;
         }
-        pendingSteps.set(index, new RecipeApplicationStep(originalStep.recipe(), remainingIterations));
+        final int budget = cycleSafeStepBudgets.getOrDefault(pattern, 0);
+        if (budget == Integer.MAX_VALUE) {
+            return;
+        }
+        final int remaining = Math.max(0, budget - executedSteps);
+        if (remaining == 0) {
+            cycleSafeStepBudgets.remove(pattern);
+            plannerOverrideRemainingSteps.put(pattern, 0);
+            queueDirty = true;
+        } else {
+            cycleSafeStepBudgets.put(pattern, remaining);
+            plannerOverrideRemainingSteps.put(pattern, remaining);
+        }
     }
 
-    // Different from TaskImpl: materializes one LP step chunk into active cyclic execution state.
-    private boolean dispatchStepExecution(final RecipeApplicationStep step,
-                                          final long dispatchIterations,
-                                          final Map<ResourceKey, Long> requirements,
-                                          final RootStorage rootStorage) {
-        final RecipeApplicationStep dispatchedStep = new RecipeApplicationStep(step.recipe(), dispatchIterations);
-        final Pattern pattern = TaskDispatcher.requirePattern(step.recipe(), patternsById);
-        final boolean root = pattern.equals(rootPattern);
-        final TaskPlan plan = TaskDispatcher.translateLpStepToTaskPlan(
-            getResource(),
-            -1,
-            dispatchedStep,
-            patternsById,
-            root
-        );
+    private CycleSafetyState buildCycleSafetyState() {
+        final Set<Pattern> active = activePatterns.keySet();
+        final Map<Pattern, Set<ResourceKey>> producedResourcesByPattern = new HashMap<>();
+        final Map<Pattern, Set<Pattern>> adjacency = new HashMap<>();
 
-        if (!hasProvider.test(pattern)) {
-            return false;
+        for (final Pattern pattern : active) {
+            producedResourcesByPattern.put(pattern, getProducedResources(pattern));
+            adjacency.put(pattern, new LinkedHashSet<>());
         }
 
-        final MutableResourceList seededInternalStorage = MutableResourceListImpl.create();
-        final MutableResourceList remainingRequirements = MutableResourceListImpl.create();
+        for (final Pattern source : active) {
+            final Set<ResourceKey> sourceProduces = producedResourcesByPattern.getOrDefault(source, Set.of());
+            for (final Pattern target : active) {
+                final Set<ResourceKey> targetConsumes = consumedResourcesByPattern.getOrDefault(target, Set.of());
+                if (!sourceProduces.isEmpty() && !targetConsumes.isEmpty() && intersects(sourceProduces, targetConsumes)) {
+                    adjacency.get(source).add(target);
+                }
+            }
+        }
 
-        requirements.forEach((resource, amountNeeded) -> {
-            final long bufferedAmount = bufferedInternalStorage.get(resource);
-            final long consumedFromBuffer = Math.min(bufferedAmount, amountNeeded);
-            if (consumedFromBuffer > 0) {
-                bufferedInternalStorage.remove(resource, consumedFromBuffer);
-                seededInternalStorage.add(resource, consumedFromBuffer);
+        final Map<Pattern, Set<Pattern>> reachable = new HashMap<>();
+        for (final Pattern pattern : active) {
+            reachable.put(pattern, dfsReachable(pattern, adjacency));
+        }
+
+        final Map<Pattern, Integer> groupByPattern = new HashMap<>();
+        final Map<Integer, Set<Pattern>> groups = new HashMap<>();
+        int groupId = 0;
+        for (final Pattern pattern : active) {
+            if (groupByPattern.containsKey(pattern)) {
+                continue;
+            }
+            final Set<Pattern> group = new LinkedHashSet<>();
+            group.add(pattern);
+            for (final Pattern other : active) {
+                if (pattern.equals(other)) {
+                    continue;
+                }
+                if (reachable.getOrDefault(pattern, Set.of()).contains(other)
+                    && reachable.getOrDefault(other, Set.of()).contains(pattern)) {
+                    group.add(other);
+                }
+            }
+            for (final Pattern member : group) {
+                groupByPattern.put(member, groupId);
+            }
+            groups.put(groupId, group);
+            groupId++;
+        }
+
+        final Map<Integer, Set<ResourceKey>> producedByCycleGroup = new HashMap<>();
+        final Set<Pattern> cyclePatterns = new HashSet<>();
+        for (final var entry : groups.entrySet()) {
+            final int id = entry.getKey();
+            final Set<Pattern> group = entry.getValue();
+            final boolean selfCycle = group.size() == 1
+                && adjacency.getOrDefault(group.iterator().next(), Set.of()).contains(group.iterator().next());
+            final boolean isCycle = group.size() > 1 || selfCycle;
+            if (!isCycle) {
+                continue;
+            }
+            final Set<ResourceKey> produced = new HashSet<>();
+            for (final Pattern pattern : group) {
+                cyclePatterns.add(pattern);
+                produced.addAll(producedResourcesByPattern.getOrDefault(pattern, Set.of()));
+            }
+            producedByCycleGroup.put(id, produced);
+        }
+
+        final Set<ResourceKey> producedInCycles = new HashSet<>();
+        final Set<ResourceKey> consumedInCycles = new HashSet<>();
+        for (final Pattern pattern : cyclePatterns) {
+            producedInCycles.addAll(producedResourcesByPattern.getOrDefault(pattern, Set.of()));
+            consumedInCycles.addAll(consumedResourcesByPattern.getOrDefault(pattern, Set.of()));
+        }
+        final Set<ResourceKey> conflicted = new HashSet<>(producedInCycles);
+        conflicted.retainAll(consumedInCycles);
+
+        return new CycleSafetyState(groupByPattern, producedByCycleGroup, conflicted);
+    }
+
+    private static Set<Pattern> dfsReachable(final Pattern start,
+                                             final Map<Pattern, Set<Pattern>> adjacency) {
+        final Set<Pattern> visited = new LinkedHashSet<>();
+        final List<Pattern> stack = new ArrayList<>();
+        stack.add(start);
+        while (!stack.isEmpty()) {
+            final Pattern current = stack.removeLast();
+            if (!visited.add(current)) {
+                continue;
+            }
+            for (final Pattern next : adjacency.getOrDefault(current, Set.of())) {
+                if (!visited.contains(next)) {
+                    stack.add(next);
+                }
+            }
+        }
+        return visited;
+    }
+
+    private static boolean intersects(final Set<ResourceKey> left,
+                                      final Set<ResourceKey> right) {
+        for (final ResourceKey resource : left) {
+            if (right.contains(resource)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Set<ResourceKey> getProducedResources(final Pattern pattern) {
+        final Set<ResourceKey> produced = new LinkedHashSet<>();
+        pattern.layout().outputs().forEach(output -> produced.add(output.resource()));
+        pattern.layout().byproducts().forEach(byproduct -> produced.add(byproduct.resource()));
+        return produced;
+    }
+
+    private static CyclicMergedPlan toMergedPlan(final ResourceKey requestedResource,
+                                                  final long requestedAmount,
+                                                  final List<RecipeApplicationStep> steps,
+                                                  final Map<UUID, Pattern> patternsById,
+                                                  final Pattern rootPattern) {
+        final Map<Pattern, MutablePatternPlan> mutablePlans = new LinkedHashMap<>();
+
+        for (final RecipeApplicationStep step : steps) {
+            final Pattern stepPattern = TaskDispatcher.requirePattern(step.recipe(), patternsById);
+            final boolean root = stepPattern.equals(rootPattern);
+            final TaskPlan stepPlan = TaskDispatcher.translateLpStepToTaskPlan(requestedResource, -1, step, patternsById, root);
+            final var entry = stepPlan.patterns().entrySet().iterator().next();
+
+            final Pattern pattern = entry.getKey();
+            final TaskPlan.PatternPlan patternPlan = entry.getValue();
+            final MutablePatternPlan mutable = mutablePlans.computeIfAbsent(pattern, ignored ->
+                new MutablePatternPlan(false, 0, new LinkedHashMap<>()));
+
+            mutable.root = mutable.root || patternPlan.root();
+            mutable.iterations += patternPlan.iterations();
+
+            for (final var ingredientEntry : patternPlan.ingredients().entrySet()) {
+                final int ingredientIndex = ingredientEntry.getKey();
+                final Map<ResourceKey, Long> targetByResource = mutable.ingredients
+                    .computeIfAbsent(ingredientIndex, ignored -> new LinkedHashMap<>());
+                for (final var possibility : ingredientEntry.getValue().entrySet()) {
+                    targetByResource.merge(possibility.getKey(), possibility.getValue(), Long::sum);
+                }
+            }
+        }
+
+        final Map<Pattern, TaskPlan.PatternPlan> patterns = new LinkedHashMap<>();
+        final Map<Pattern, Integer> plannerOverrideInitialSteps = new LinkedHashMap<>();
+        final Map<Pattern, Set<ResourceKey>> consumedResourcesByPattern = new LinkedHashMap<>();
+        final Map<ResourceKey, Long> totalInputs = new LinkedHashMap<>();
+        final Map<ResourceKey, Long> totalProduced = new LinkedHashMap<>();
+
+        for (final var entry : mutablePlans.entrySet()) {
+            final Pattern pattern = entry.getKey();
+            final MutablePatternPlan mutable = entry.getValue();
+            final Map<Integer, Map<ResourceKey, Long>> immutableIngredients = new LinkedHashMap<>();
+
+            for (final var ingredientEntry : mutable.ingredients.entrySet()) {
+                immutableIngredients.put(ingredientEntry.getKey(), Map.copyOf(ingredientEntry.getValue()));
+                ingredientEntry.getValue().forEach((resource, amount) -> totalInputs.merge(resource, amount, Long::sum));
             }
 
-            final long remaining = amountNeeded - consumedFromBuffer;
-            if (remaining > 0) {
-                remainingRequirements.add(resource, remaining);
+            final Set<ResourceKey> consumedResources = new LinkedHashSet<>();
+            immutableIngredients.values().forEach(ingredientResources -> consumedResources.addAll(ingredientResources.keySet()));
+            consumedResourcesByPattern.put(pattern, Set.copyOf(consumedResources));
+
+            final long totalIterations = mutable.iterations;
+            plannerOverrideInitialSteps.put(pattern, (int) Math.min(Integer.MAX_VALUE, Math.max(0L, totalIterations)));
+            pattern.layout().outputs().forEach(output ->
+                totalProduced.merge(output.resource(), output.amount() * totalIterations, Long::sum));
+            pattern.layout().byproducts().forEach(byproduct ->
+                totalProduced.merge(byproduct.resource(), byproduct.amount() * totalIterations, Long::sum));
+
+            patterns.put(pattern, new TaskPlan.PatternPlan(mutable.root, totalIterations, Map.copyOf(immutableIngredients)));
+        }
+
+        final List<ResourceAmount> mergedInitialRequirements = new ArrayList<>();
+        totalInputs.forEach((resource, needed) -> {
+            final long produced = totalProduced.getOrDefault(resource, 0L);
+            final long requiredFromStorage = Math.max(0L, needed - produced);
+            if (requiredFromStorage > 0L) {
+                mergedInitialRequirements.add(new ResourceAmount(resource, requiredFromStorage));
             }
         });
 
-        final Map<Pattern, AbstractTaskPattern> stepPatterns = new LinkedHashMap<>();
-        for (final var patternEntry : plan.patterns().entrySet()) {
-            stepPatterns.put(
-                patternEntry.getKey(),
-                TaskImpl.createTaskPatternInternal(patternEntry.getKey(), patternEntry.getValue())
-            );
-        }
-
-        final int stepIndex = activeSteps.isEmpty()
-            ? 0
-            : activeSteps.keySet().stream().mapToInt(i -> i).max().orElse(-1) + 1;
-        activeSteps.put(stepIndex, new StepExecution(stepPatterns, remainingRequirements.copy(), seededInternalStorage.copy()));
-        return true;
+        return new CyclicMergedPlan(
+            Map.copyOf(patterns),
+            List.copyOf(mergedInitialRequirements),
+            Map.copyOf(consumedResourcesByPattern),
+            Map.copyOf(plannerOverrideInitialSteps)
+        );
     }
 
-    // Different from TaskImpl: computes dispatch limit per LP step from currently available resources.
-    private static long maxDispatchableIterations(final RecipeApplicationStep step,
-                                                  final Map<ResourceKey, Long> available) {
-        long maxIterations = step.timesApplied();
-        for (final var entry : step.recipe().input()) {
-            final long perIterationAmount = entry.getValue();
-            if (perIterationAmount <= 0) {
-                continue;
-            }
-            final long availableAmount = available.getOrDefault(RecipeDesanitizer.toSanitizedResourceKey(entry.getKey()), 0L);
-            maxIterations = Math.min(maxIterations, availableAmount / perIterationAmount);
-            if (maxIterations <= 0) {
-                return 0;
-            }
-        }
-        return Math.max(0, maxIterations);
+    private record CyclicMergedPlan(Map<Pattern, TaskPlan.PatternPlan> patternPlans,
+                                    List<ResourceAmount> initialRequirements,
+                                    Map<Pattern, Set<ResourceKey>> consumedResourcesByPattern,
+                                    Map<Pattern, Integer> plannerOverrideInitialSteps) {
     }
 
-    // Different from TaskImpl: computes per-dispatch input requirements for a cyclic LP step chunk.
-    private static Map<ResourceKey, Long> stepRequirements(final RecipeApplicationStep step,
-                                                           final long iterations) {
-        final Map<ResourceKey, Long> requirements = new HashMap<>();
-        for (final var entry : step.recipe().input()) {
-            requirements.merge(RecipeDesanitizer.toSanitizedResourceKey(entry.getKey()), entry.getValue() * iterations, Long::sum);
-        }
-        return requirements;
+    private record CycleSafetyState(Map<Pattern, Integer> cycleGroupByPattern,
+                                    Map<Integer, Set<ResourceKey>> producedResourcesByCycleGroup,
+                                    Set<ResourceKey> conflictedResources) {
     }
 
-    // Different from TaskImpl: holds per-dispatched-step execution state.
-    private record StepExecution(Map<Pattern, AbstractTaskPattern> patterns,
-                                 MutableResourceList initialRequirements,
-                                 MutableResourceList internalStorage) {
+    private record StepExecutionResult(PatternStepResult result,
+                                       int executedSteps) {
+    }
+
+    private static final class MutablePatternPlan {
+        private boolean root;
+        private long iterations;
+        private final Map<Integer, Map<ResourceKey, Long>> ingredients;
+
+        private MutablePatternPlan(final boolean root,
+                                   final long iterations,
+                                   final Map<Integer, Map<ResourceKey, Long>> ingredients) {
+            this.root = root;
+            this.iterations = iterations;
+            this.ingredients = ingredients;
+        }
     }
 }

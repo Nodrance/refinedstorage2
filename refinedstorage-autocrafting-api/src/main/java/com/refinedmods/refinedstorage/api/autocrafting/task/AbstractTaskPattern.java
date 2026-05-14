@@ -101,4 +101,12 @@ public abstract class AbstractTaskPattern {
     public long afterInsert(final ResourceKey resource, final long amount) {
         return 0;
     }
+
+    public final long getRemainingIngredientAmount(final ResourceKey resource) {
+        long amount = 0;
+        for (final Map<ResourceKey, Long> options : ingredients.values()) {
+            amount += options.getOrDefault(resource, 0L);
+        }
+        return amount;
+    }
 }

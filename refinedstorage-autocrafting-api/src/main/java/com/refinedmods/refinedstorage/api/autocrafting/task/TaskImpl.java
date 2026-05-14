@@ -34,8 +34,8 @@ public class TaskImpl implements Task {
     private final List<AbstractTaskPattern> completedPatterns = new ArrayList<>();
     private final MutableResourceList initialRequirements;
     private final MutableResourceList internalStorage;
-    private TaskState state = TaskState.READY;
-    private boolean cancelled;
+    protected TaskState state = TaskState.READY;
+    protected boolean cancelled;
 
     public TaskImpl(final TaskSnapshot snapshot) {
         this.id = snapshot.id();
@@ -122,7 +122,7 @@ public class TaskImpl implements Task {
         return state;
     }
 
-    private void updateState(final TaskState newState) {
+    protected void updateState(final TaskState newState) {
         LOGGER.debug("Task {} state changed from {} to {}", id.id(), state, newState);
         this.state = newState;
     }
