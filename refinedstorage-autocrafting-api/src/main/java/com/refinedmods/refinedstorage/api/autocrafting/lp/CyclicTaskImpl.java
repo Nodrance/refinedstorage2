@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Comparator;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.lang.reflect.Method;
@@ -85,20 +86,7 @@ final class CyclicTaskImpl extends TaskImpl {
             (a, b) -> a,
             LinkedHashMap::new
         ));
-
-        final LinkedHashMap<Pattern, AbstractTaskPattern> orderedPatterns = new LinkedHashMap<>();
-        final AbstractTaskPattern rootTaskPattern = mergedPatterns.get(rootPattern);
-        if (rootTaskPattern != null) {
-            orderedPatterns.put(rootPattern, rootTaskPattern);
-        }
-        for (final Pattern pattern : plannerPatternOrder) {
-            final AbstractTaskPattern taskPattern = mergedPatterns.get(pattern);
-            if (taskPattern != null) {
-                orderedPatterns.put(pattern, taskPattern);
-            }
-        }
-        mergedPatterns.forEach(orderedPatterns::putIfAbsent);
-        this.patterns = orderedPatterns;
+        this.patterns = mergedPatterns;
     }
 
     @Override
@@ -122,13 +110,14 @@ final class CyclicTaskImpl extends TaskImpl {
                         final ExternalPatternSinkProvider sinkProvider,
                         final StepBehavior stepBehavior,
                         final TaskListener listener) {
-        return switch (state) {
+        final boolean changed = switch (state) {
             case READY -> startTask(rootStorage);
             case EXTRACTING_INITIAL_RESOURCES -> extractInitialResourcesAndTryStartRunningTask(rootStorage);
             case RUNNING -> stepPatterns(rootStorage, sinkProvider, stepBehavior, listener);
             case RETURNING_INTERNAL_STORAGE -> returnInternalStorageAndTryCompleteTask(rootStorage);
             case COMPLETED -> false;
         };
+        return changed;
     }
 
     @Override
@@ -146,10 +135,12 @@ final class CyclicTaskImpl extends TaskImpl {
 
         double totalWeightedCompleted = 0;
         double totalWeight = 0;
-        for (final AbstractTaskPattern pattern : getStatusOrderedPatterns()) {
+        for (final Map.Entry<Pattern, AbstractTaskPattern> patternEntry : getStatusOrderedPatterns()) {
+            final AbstractTaskPattern pattern = patternEntry.getValue();
             pattern.appendStatus(builder);
             final long weight = getPatternWeight(pattern);
-            totalWeightedCompleted += getPatternPercentageCompleted(pattern) * weight;
+            final double percentage = getPatternPercentageCompleted(pattern);
+            totalWeightedCompleted += percentage * weight;
             totalWeight += weight;
         }
         for (final AbstractTaskPattern pattern : completedPatterns) {
@@ -158,25 +149,41 @@ final class CyclicTaskImpl extends TaskImpl {
             totalWeight += weight;
         }
 
-        internalStorage.getAll().forEach(
-            internalResource -> builder.stored(internalResource, internalStorage.get(internalResource))
-        );
+        internalStorage.getAll().stream()
+            .sorted(Comparator
+                .comparingInt(this::getInternalStatusOrderPriority)
+                .thenComparing(resource -> resource.toString()))
+            .forEach(internalResource -> builder.stored(internalResource, internalStorage.get(internalResource)));
         return builder.build(totalWeight == 0 ? 0 : totalWeightedCompleted / totalWeight);
     }
 
-    private List<AbstractTaskPattern> getStatusOrderedPatterns() {
-        final List<AbstractTaskPattern> ordered = new ArrayList<>();
-        final AbstractTaskPattern root = patterns.get(rootPattern);
-        if (root != null) {
-            ordered.add(root);
-        }
-        for (final var entry : patterns.entrySet()) {
-            if (entry.getKey().equals(rootPattern)) {
-                continue;
+    private int getInternalStatusOrderPriority(final ResourceKey resource) {
+        for (int i = 0; i < plannerPatternOrder.size(); ++i) {
+            final Pattern pattern = plannerPatternOrder.get(i);
+            final boolean outputsResource = pattern.layout().outputs().stream()
+                .anyMatch(output -> output.resource().equals(resource));
+            if (outputsResource) {
+                return i;
             }
-            ordered.add(entry.getValue());
         }
+        return Integer.MAX_VALUE;
+    }
+
+    private List<Map.Entry<Pattern, AbstractTaskPattern>> getStatusOrderedPatterns() {
+        final List<Map.Entry<Pattern, AbstractTaskPattern>> ordered = new ArrayList<>(patterns.entrySet());
+        ordered.sort(Comparator.comparingInt(this::getStatusOrderPriority));
         return ordered;
+    }
+
+    private int getStatusOrderPriority(final Map.Entry<Pattern, AbstractTaskPattern> patternEntry) {
+        final Pattern pattern = patternEntry.getKey();
+        if (pattern.equals(rootPattern)) {
+            return 0;
+        }
+        if ("EXTERNAL".equals(pattern.layout().type().name())) {
+            return 1;
+        }
+        return 2;
     }
 
     @Override
@@ -195,7 +202,6 @@ final class CyclicTaskImpl extends TaskImpl {
                 LinkedHashMap::new
             )),
             completedPatterns.stream()
-                .filter(pattern -> pattern.getClass().getSimpleName().equals("InternalTaskPattern"))
                 .map(CyclicTaskImpl::createPatternSnapshot)
                 .toList(),
             initialRequirements.copy(),
@@ -244,10 +250,11 @@ final class CyclicTaskImpl extends TaskImpl {
             recalculateStepSafeQueue();
         }
 
-        final var it = patterns.entrySet().iterator();
         boolean changed = false;
-        while (it.hasNext()) {
-            final var pattern = it.next();
+        for (final var pattern : getExecutionOrderedPatterns()) {
+            if (!patterns.containsKey(pattern.getKey())) {
+                continue;
+            }
             final int budget = cycleSafeStepBudgets.getOrDefault(pattern.getKey(), 0);
             if (budget <= 0) {
                 continue;
@@ -265,7 +272,7 @@ final class CyclicTaskImpl extends TaskImpl {
             if (result.result() == PatternStepResult.COMPLETED) {
                 LOGGER.debug("{} completed", pattern.getKey());
                 completedPatterns.add(pattern.getValue());
-                it.remove();
+                patterns.remove(pattern.getKey());
                 cycleSafeStepBudgets.remove(pattern.getKey());
                 plannerOverrideRemainingSteps.remove(pattern.getKey());
                 queueDirty = true;
@@ -281,6 +288,28 @@ final class CyclicTaskImpl extends TaskImpl {
             }
         }
         return changed;
+    }
+
+    private List<Map.Entry<Pattern, AbstractTaskPattern>> getExecutionOrderedPatterns() {
+        final LinkedHashMap<Pattern, AbstractTaskPattern> ordered = new LinkedHashMap<>();
+
+        final AbstractTaskPattern root = patterns.get(rootPattern);
+        if (root != null) {
+            ordered.put(rootPattern, root);
+        }
+
+        for (int i = plannerPatternOrder.size() - 1; i >= 0; --i) {
+            final Pattern pattern = plannerPatternOrder.get(i);
+            if (!pattern.equals(rootPattern)) {
+                final AbstractTaskPattern taskPattern = patterns.get(pattern);
+                if (taskPattern != null) {
+                    ordered.put(pattern, taskPattern);
+                }
+            }
+        }
+
+        patterns.forEach(ordered::putIfAbsent);
+        return new ArrayList<>(ordered.entrySet());
     }
 
     private StepExecutionResult stepPattern(final RootStorage rootStorage,
@@ -603,11 +632,22 @@ final class CyclicTaskImpl extends TaskImpl {
                                              final String methodName,
                                              final Class<T> returnType) {
         try {
-            final Method method = pattern.getClass().getDeclaredMethod(methodName);
+            final Method method = getMethod(pattern.getClass(), methodName);
             method.setAccessible(true);
             return returnType.cast(method.invoke(pattern));
         } catch (final ReflectiveOperationException e) {
             throw new IllegalStateException("Failed to invoke " + methodName + " on " + pattern.getClass(), e);
+        }
+    }
+
+    private static Method getMethod(final Class<?> clazz, final String methodName) throws NoSuchMethodException {
+        try {
+            return clazz.getDeclaredMethod(methodName);
+        } catch (final NoSuchMethodException e) {
+            if (clazz.getSuperclass() != null) {
+                return getMethod(clazz.getSuperclass(), methodName);
+            }
+            throw e;
         }
     }
 
