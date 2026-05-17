@@ -597,11 +597,14 @@ public final class CraftingInitializer {
         Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
 
         if (recipeApplicationPath.isPresent()) {
+            final RecipeApplicationPath sanitizedPath = RecipeDesanitizer.toRecipeApplicationPath(
+                recipeApplicationPath.get()
+            );
             return buildTreePreviewFromPath(
                 resource,
                 amount,
                 rootStorage,
-                recipeApplicationPath.get(),
+                sanitizedPath,
                 initialization.relevantPatterns()
             );
         }
@@ -618,7 +621,7 @@ public final class CraftingInitializer {
         final ResourceKey resource,
         final long amount,
         final RootStorage rootStorage,
-        final DesanitizedRecipeApplicationPath path,
+        final RecipeApplicationPath path,
         final Collection<Pattern> relevantPatterns
     ) {
         LOGGER.debug("[LPT] Entering buildTreePreviewFromSteps()");
@@ -626,17 +629,17 @@ public final class CraftingInitializer {
         final ArrayDeque<PendingNode> frontier = new ArrayDeque<>();
         frontier.add(new PendingNode(root, amount));
 
-        final List<DesanitizedRecipeApplicationStep> reversedSteps = new ArrayList<>(path.steps());
+        final List<RecipeApplicationStep> reversedSteps = new ArrayList<>(path.steps());
         Collections.reverse(reversedSteps);
 
-        for (final DesanitizedRecipeApplicationStep step : reversedSteps) {
+        for (final RecipeApplicationStep step : reversedSteps) {
             if (frontier.isEmpty()) {
                 break;
             }
 
             final List<PendingNode> matchedNodes = new ArrayList<>();
             for (final PendingNode pendingNode : frontier) {
-                if (getDesanitizedAmount(step.recipe().output(), pendingNode.node.resource) > 0L) {
+                if (getSanitizedAmount(step.recipe().output(), pendingNode.node.resource) > 0L) {
                     matchedNodes.add(pendingNode);
                 }
             }
@@ -655,7 +658,7 @@ public final class CraftingInitializer {
 
                 final NodeBuilder node = pendingNode.node;
                 final long requiredAmount = pendingNode.requiredAmount;
-                final long outputPerIteration = getDesanitizedAmount(step.recipe().output(), node.resource);
+                final long outputPerIteration = getSanitizedAmount(step.recipe().output(), node.resource);
                 if (outputPerIteration <= 0) {
                     nextNodes.add(pendingNode);
                     continue;
@@ -672,8 +675,8 @@ public final class CraftingInitializer {
                 final long craftedAmount = outputPerIteration * usedIterations;
                 node.toCraft += craftedAmount;
 
-                for (final var input : step.recipe().input().entrySet()) {
-                    final ResourceKey inputResource = input.getKey();
+                for (final var input : step.recipe().input()) {
+                    final ResourceKey inputResource = RecipeDesanitizer.toSanitizedResourceKey(input.getKey());
                     final long childAmount = input.getValue() * usedIterations;
                     if (childAmount <= 0) {
                         continue;
@@ -697,11 +700,9 @@ public final class CraftingInitializer {
         }
 
         final Set<ResourceKey> producibleResources = new HashSet<>();
-        for (final DesanitizedRecipeApplicationStep step : path.steps()) {
-            for (final var output : step.recipe().output().entrySet()) {
-                if (output.getValue() > 0L) {
-                    producibleResources.add(output.getKey());
-                }
+        for (final RecipeApplicationStep step : path.steps()) {
+            for (final var output : step.recipe().output()) {
+                producibleResources.add(RecipeDesanitizer.toSanitizedResourceKey(output.getKey()));
             }
         }
 
@@ -728,11 +729,18 @@ public final class CraftingInitializer {
     }
 
     private static List<ResourceAmount> outputsOfPatternWithCycle(
-        final DesanitizedRecipeApplicationPath path,
+        final RecipeApplicationPath path,
         final Collection<Pattern> relevantPatterns
     ) {
         LOGGER.debug("[LPT] Entering outputsOfPatternWithCycle()");
-        if (!path.hasCycles()) {
+        final Map<UUID, SanitizedRecipe> recipesById = new LinkedHashMap<>();
+        for (final RecipeApplicationStep step : path.steps()) {
+            recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
+        }
+        final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult = RecipeAnalyzer.detectRecipeCycles(
+            new ArrayList<>(recipesById.values())
+        );
+        if (cycleDetectionResult.cycles().isEmpty()) {
             return Collections.emptyList();
         }
 
@@ -741,14 +749,18 @@ public final class CraftingInitializer {
             patternsById.put(pattern.id(), pattern);
         }
 
-        final Set<UUID> cyclePatternIds = new LinkedHashSet<>();
-        for (final DesanitizedRecipeApplicationStep step : path.steps()) {
-            cyclePatternIds.add(step.recipe().sourcePatternId());
+        final Set<UUID> cycleRecipeIds = new LinkedHashSet<>();
+        for (final List<UUID> cycle : cycleDetectionResult.cycles()) {
+            cycleRecipeIds.addAll(cycle);
         }
 
         final Set<ResourceAmount> outputs = new HashSet<>();
-        for (final UUID patternId : cyclePatternIds) {
-            final Pattern pattern = patternsById.get(patternId);
+        for (final UUID recipeId : cycleRecipeIds) {
+            final SanitizedRecipe recipe = recipesById.get(recipeId);
+            if (recipe == null) {
+                continue;
+            }
+            final Pattern pattern = patternsById.get(recipe.sourcePatternId());
             if (pattern == null) {
                 continue;
             }
@@ -958,8 +970,8 @@ public final class CraftingInitializer {
     }
 
 
-    private static long getDesanitizedAmount(final Map<ResourceKey, Long> pool, final ResourceKey resource) {
-        return pool.getOrDefault(resource, 0L);
+    private static long getSanitizedAmount(final ResourcePool pool, final ResourceKey resource) {
+        return pool.getAmount(new MultiResourceKey(List.of(resource)));
     }
 
     private static void throwIfCancelled(final CancellationToken cancellationToken) {

@@ -275,6 +275,14 @@ public final class RecipeDesanitizer {
             cancellationToken
         );
 
+        return toRecipeApplicationPath(desanitizedPath);
+    }
+
+    public static RecipeApplicationPath toRecipeApplicationPath(
+        final DesanitizedRecipeApplicationPath desanitizedPath
+    ) {
+        Objects.requireNonNull(desanitizedPath, "desanitizedPath cannot be null");
+
         final List<RecipeApplicationStep> decodedSteps = desanitizedPath.steps().stream()
             .map(step -> new RecipeApplicationStep(
                 new SanitizedRecipe(
@@ -363,7 +371,7 @@ public final class RecipeDesanitizer {
     private static ResourcePool toResourcePool(final Map<ResourceKey, Long> resources) {
         final ResourcePool result = ResourcePool.empty();
         for (final var entry : resources.entrySet()) {
-            if (entry.getValue() > 0L) {
+            if (entry.getValue() != 0L) {
                 result.addAmount(new MultiResourceKey(List.of(entry.getKey())), entry.getValue());
             }
         }
@@ -436,6 +444,27 @@ public final class RecipeDesanitizer {
             throwIfCancelled(cancellationToken);
             final long amount = entry.getValue();
             if (amount <= 0L) {
+                continue;
+            }
+            final ResourceKey firstMember = firstMemberOf(entry.getKey());
+            decoded.merge(firstMember, amount, Long::sum);
+        }
+        return decoded;
+    }
+
+    public static Map<ResourceKey, Long> decodeSanitizedResourcesToDesanitizedRaw(
+        final ResourcePool sanitizedResources,
+        final CancellationToken cancellationToken
+    ) {
+        Objects.requireNonNull(sanitizedResources, "sanitizedResources cannot be null");
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        throwIfCancelled(cancellationToken);
+
+        final Map<ResourceKey, Long> decoded = new LinkedHashMap<>();
+        for (final Map.Entry<MultiResourceKey, Long> entry : sanitizedResources) {
+            throwIfCancelled(cancellationToken);
+            final long amount = entry.getValue();
+            if (amount == 0L) {
                 continue;
             }
             final ResourceKey firstMember = firstMemberOf(entry.getKey());
@@ -611,9 +640,8 @@ public final class RecipeDesanitizer {
             sanitizedStartingResources,
             cancellationToken
         );
-        final Map<ResourceKey, Long> finalInventory = decodeSanitizedResourcePoolToDesanitized(
+        final Map<ResourceKey, Long> finalInventory = decodeSanitizedResourcesToDesanitizedRaw(
             applicationSet.finalInventoryValues(),
-            sanitizedStartingResources,
             cancellationToken
         );
         final Map<ResourceKey, Long> missingResources = decodeSanitizedResourcesToDesanitized(

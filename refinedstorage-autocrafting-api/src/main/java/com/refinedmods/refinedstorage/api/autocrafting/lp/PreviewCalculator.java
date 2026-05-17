@@ -144,59 +144,8 @@ public final class PreviewCalculator {
         Objects.requireNonNull(targetResources, "targetResources cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
-
-        final DesanitizedRecipeApplicationSet applicationSet = path.applicationSet();
-        final Map<ResourceKey, Long> crafted = computeCraftedAmounts(path, cancellationToken);
-        final Map<ResourceKey, Long> used = toPositiveMap(applicationSet.usedResources());
-        final Map<ResourceKey, Long> missing = toPositiveMap(applicationSet.missingResources());
-        final Map<ResourceKey, Long> finalInventory = toRawMap(applicationSet.finalInventoryValues());
-
-        final Set<ResourceKey> universe = new LinkedHashSet<>();
-        universe.addAll(applicationSet.relevantResourceKeys());
-        universe.addAll(crafted.keySet());
-        universe.addAll(used.keySet());
-        universe.addAll(missing.keySet());
-        universe.addAll(finalInventory.keySet());
-
-        final Map<ResourceKey, Long> available = new LinkedHashMap<>();
-        for (final ResourceKey resource : universe) {
-            throwIfCancelled(cancellationToken);
-            final long usedAmount = used.getOrDefault(resource, 0L);
-            final long craftedAmount = crafted.getOrDefault(resource, 0L);
-            final long finalAmount = finalInventory.getOrDefault(resource, 0L);
-            final long estimatedStarting = finalAmount - craftedAmount + usedAmount;
-            final long availableAmount = Math.min(usedAmount, Math.max(0L, estimatedStarting));
-            if (availableAmount > 0L) {
-                available.put(resource, availableAmount);
-            }
-        }
-
-        final Map<ResourceKey, Amounts> byResource = new LinkedHashMap<>();
-        for (final ResourceKey resource : universe) {
-            throwIfCancelled(cancellationToken);
-            final long availableAmount = available.getOrDefault(resource, 0L);
-            final long missingAmount = missing.getOrDefault(resource, 0L);
-            final long craftedAmount = crafted.getOrDefault(resource, 0L);
-            if (availableAmount > 0L || missingAmount > 0L || craftedAmount > 0L) {
-                byResource.put(resource, new Amounts(availableAmount, missingAmount, craftedAmount));
-            }
-        }
-
-        removeCraftedButUnusedRecipeResourcesDesanitized(path.steps(), byResource, targetResources, cancellationToken);
-
-        final List<ResourceKey> orderedResources = orderResourcesDesanitized(path.steps(), byResource.keySet(), cancellationToken);
-        final List<PreviewItem> items = new ArrayList<>(orderedResources.size());
-        for (final ResourceKey resource : orderedResources) {
-            throwIfCancelled(cancellationToken);
-            final Amounts amounts = byResource.get(resource);
-            if (amounts == null) {
-                continue;
-            }
-            items.add(new PreviewItem(resource, amounts.available(), amounts.missing(), amounts.toCraft()));
-        }
-
-        final PreviewType type = missing.isEmpty() ? PreviewType.SUCCESS : PreviewType.MISSING_RESOURCES;
-        return new Preview(type, List.copyOf(items), Collections.emptyList());
+        final RecipeApplicationPath sanitizedPath = RecipeDesanitizer.toRecipeApplicationPath(path);
+        return calculatePreview(sanitizedPath, targetResources, cancellationToken);
     }
 
     private static Map<ResourceKey, Long> computeCraftedAmounts(
