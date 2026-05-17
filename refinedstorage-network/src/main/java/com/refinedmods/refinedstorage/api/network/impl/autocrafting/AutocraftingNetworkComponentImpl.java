@@ -7,7 +7,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationT
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculatorImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.DesanitizedRecipeApplicationPath;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.TaskDispatcher;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewCraftingCalculatorListener;
@@ -489,7 +489,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
             .orElse(EnsureResult.MISSING_RESOURCES);
     }
 
-    private static Optional<RecipeApplicationPath> solveLinearCraftablePath(
+    private static Optional<DesanitizedRecipeApplicationPath> solveLinearCraftablePath(
         final RootStorage rootStorage,
         final PatternRepositoryImpl patternRepository,
         final ResourceKey resource,

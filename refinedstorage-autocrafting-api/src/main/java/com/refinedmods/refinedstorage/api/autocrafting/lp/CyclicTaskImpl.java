@@ -19,8 +19,6 @@ import com.refinedmods.refinedstorage.api.resource.list.MutableResourceList;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceListImpl;
 import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -33,6 +31,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.lang.reflect.Method;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class CyclicTaskImpl extends TaskImpl {
     private static final Logger LOGGER = LoggerFactory.getLogger(CyclicTaskImpl.class);
@@ -40,8 +42,10 @@ final class CyclicTaskImpl extends TaskImpl {
     private final long startTime;
     private final MutableResourceList initialRequirements = MutableResourceListImpl.create();
     private final MutableResourceList internalStorage = MutableResourceListImpl.create();
-    private final Map<Pattern, AbstractTaskPattern> activePatterns;
+    private final Map<Pattern, AbstractTaskPattern> patterns;
     private final List<AbstractTaskPattern> completedPatterns = new ArrayList<>();
+    private final Pattern rootPattern;
+
     private final List<Pattern> plannerPatternOrder;
     private final Map<Pattern, Integer> plannerOverrideRemainingSteps;
     private final Map<Pattern, Set<ResourceKey>> consumedResourcesByPattern;
@@ -55,32 +59,46 @@ final class CyclicTaskImpl extends TaskImpl {
                    final long amount,
                    final Actor actor,
                    final boolean notify,
-                   final RecipeApplicationPath path,
+                   final DesanitizedRecipeApplicationPath path,
                    final Map<UUID, Pattern> patternsById,
                    final Pattern rootPattern,
                    final Predicate<Pattern> hasProvider) {
         super(TaskDispatcher.createCyclicTaskPlan(resource, amount, rootPattern), actor, notify);
         this.startTime = System.currentTimeMillis();
+        this.rootPattern = rootPattern;
 
         final CyclicMergedPlan mergedPlan = toMergedPlan(resource, amount, path.steps(), patternsById, rootPattern);
         mergedPlan.initialRequirements().forEach(initialRequirements::add);
         this.plannerOverrideRemainingSteps = new HashMap<>(mergedPlan.plannerOverrideInitialSteps());
         this.consumedResourcesByPattern = mergedPlan.consumedResourcesByPattern();
-        this.activePatterns = mergedPlan.patternPlans().entrySet().stream().collect(Collectors.toMap(
+
+        final LinkedHashSet<Pattern> order = new LinkedHashSet<>();
+        for (final DesanitizedRecipeApplicationStep step : path.steps()) {
+            final Pattern pattern = TaskDispatcher.requirePattern(step.recipe(), patternsById);
+            order.add(pattern);
+        }
+        this.plannerPatternOrder = List.copyOf(order);
+
+        final Map<Pattern, AbstractTaskPattern> mergedPatterns = mergedPlan.patternPlans().entrySet().stream().collect(Collectors.toMap(
             Map.Entry::getKey,
             e -> TaskImpl.createTaskPatternInternal(e.getKey(), e.getValue()),
             (a, b) -> a,
             LinkedHashMap::new
         ));
 
-        final LinkedHashSet<Pattern> order = new LinkedHashSet<>();
-        for (final RecipeApplicationStep step : path.steps()) {
-            final Pattern pattern = TaskDispatcher.requirePattern(step.recipe(), patternsById);
-            if (activePatterns.containsKey(pattern)) {
-                order.add(pattern);
+        final LinkedHashMap<Pattern, AbstractTaskPattern> orderedPatterns = new LinkedHashMap<>();
+        final AbstractTaskPattern rootTaskPattern = mergedPatterns.get(rootPattern);
+        if (rootTaskPattern != null) {
+            orderedPatterns.put(rootPattern, rootTaskPattern);
+        }
+        for (final Pattern pattern : plannerPatternOrder) {
+            final AbstractTaskPattern taskPattern = mergedPatterns.get(pattern);
+            if (taskPattern != null) {
+                orderedPatterns.put(pattern, taskPattern);
             }
         }
-        this.plannerPatternOrder = List.copyOf(order);
+        mergedPatterns.forEach(orderedPatterns::putIfAbsent);
+        this.patterns = orderedPatterns;
     }
 
     @Override
@@ -115,7 +133,7 @@ final class CyclicTaskImpl extends TaskImpl {
 
     @Override
     public void cancel() {
-        updateState(TaskState.RETURNING_INTERNAL_STORAGE);
+        state = TaskState.RETURNING_INTERNAL_STORAGE;
         cancelled = true;
     }
 
@@ -126,14 +144,39 @@ final class CyclicTaskImpl extends TaskImpl {
             requiredResource -> builder.extracting(requiredResource, initialRequirements.get(requiredResource))
         );
 
-        for (final AbstractTaskPattern pattern : activePatterns.values()) {
+        double totalWeightedCompleted = 0;
+        double totalWeight = 0;
+        for (final AbstractTaskPattern pattern : getStatusOrderedPatterns()) {
             pattern.appendStatus(builder);
+            final long weight = getPatternWeight(pattern);
+            totalWeightedCompleted += getPatternPercentageCompleted(pattern) * weight;
+            totalWeight += weight;
+        }
+        for (final AbstractTaskPattern pattern : completedPatterns) {
+            final long weight = getPatternWeight(pattern);
+            totalWeightedCompleted += weight;
+            totalWeight += weight;
         }
 
         internalStorage.getAll().forEach(
             internalResource -> builder.stored(internalResource, internalStorage.get(internalResource))
         );
-        return builder.build(progress());
+        return builder.build(totalWeight == 0 ? 0 : totalWeightedCompleted / totalWeight);
+    }
+
+    private List<AbstractTaskPattern> getStatusOrderedPatterns() {
+        final List<AbstractTaskPattern> ordered = new ArrayList<>();
+        final AbstractTaskPattern root = patterns.get(rootPattern);
+        if (root != null) {
+            ordered.add(root);
+        }
+        for (final var entry : patterns.entrySet()) {
+            if (entry.getKey().equals(rootPattern)) {
+                continue;
+            }
+            ordered.add(entry.getValue());
+        }
+        return ordered;
     }
 
     @Override
@@ -145,8 +188,16 @@ final class CyclicTaskImpl extends TaskImpl {
             getActor(),
             shouldNotify(),
             startTime,
-            Map.of(),
-            List.of(),
+            patterns.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey,
+                e -> createPatternSnapshot(e.getValue()),
+                (a, b) -> a,
+                LinkedHashMap::new
+            )),
+            completedPatterns.stream()
+                .filter(pattern -> pattern.getClass().getSimpleName().equals("InternalTaskPattern"))
+                .map(CyclicTaskImpl::createPatternSnapshot)
+                .toList(),
             initialRequirements.copy(),
             internalStorage.copy(),
             state,
@@ -181,8 +232,6 @@ final class CyclicTaskImpl extends TaskImpl {
         if (extractedAll) {
             updateState(TaskState.RUNNING);
             queueDirty = true;
-            // Prime cycle-safety before the first RUNNING tick to avoid one-step lag.
-            recalculateStepSafeQueue();
         }
         return extractedAny;
     }
@@ -195,40 +244,36 @@ final class CyclicTaskImpl extends TaskImpl {
             recalculateStepSafeQueue();
         }
 
+        final var it = patterns.entrySet().iterator();
         boolean changed = false;
-        final var it = activePatterns.entrySet().iterator();
         while (it.hasNext()) {
-            final var entry = it.next();
-            final Pattern pattern = entry.getKey();
-            final int budget = cycleSafeStepBudgets.getOrDefault(pattern, 0);
+            final var pattern = it.next();
+            final int budget = cycleSafeStepBudgets.getOrDefault(pattern.getKey(), 0);
             if (budget <= 0) {
                 continue;
             }
 
-            final StepExecutionResult executionResult = stepPattern(
+            final StepExecutionResult result = stepPattern(
                 rootStorage,
                 sinkProvider,
                 stepBehavior,
                 listener,
-                pattern,
-                entry.getValue()
+                pattern
             );
+            consumeStepBudget(pattern.getKey(), result.executedSteps());
 
-            consumeStepBudget(pattern, executionResult.executedSteps());
-
-            if (executionResult.result() == PatternStepResult.COMPLETED) {
+            if (result.result() == PatternStepResult.COMPLETED) {
+                LOGGER.debug("{} completed", pattern.getKey());
+                completedPatterns.add(pattern.getValue());
                 it.remove();
-                cycleSafeStepBudgets.remove(pattern);
-                plannerOverrideRemainingSteps.remove(pattern);
-                completedPatterns.add(entry.getValue());
+                cycleSafeStepBudgets.remove(pattern.getKey());
+                plannerOverrideRemainingSteps.remove(pattern.getKey());
                 queueDirty = true;
-                changed = true;
-            } else {
-                changed |= executionResult.result() != PatternStepResult.IDLE;
             }
+            changed |= result.result() != PatternStepResult.IDLE;
         }
 
-        if (activePatterns.isEmpty()) {
+        if (patterns.isEmpty()) {
             if (internalStorage.isEmpty()) {
                 updateState(TaskState.COMPLETED);
             } else {
@@ -242,25 +287,35 @@ final class CyclicTaskImpl extends TaskImpl {
                                             final ExternalPatternSinkProvider sinkProvider,
                                             final StepBehavior stepBehavior,
                                             final TaskListener listener,
-                                            final Pattern pattern,
-                                            final AbstractTaskPattern taskPattern) {
+                                            final Map.Entry<Pattern, AbstractTaskPattern> pattern) {
         PatternStepResult result = PatternStepResult.IDLE;
-        int executedSteps = 0;
-        if (!stepBehavior.canStep(pattern)) {
-            return new StepExecutionResult(result, executedSteps);
+        if (!stepBehavior.canStep(pattern.getKey())) {
+            return new StepExecutionResult(result, 0);
         }
-        final int steps = stepBehavior.getSteps(pattern);
-        for (int i = 0; i < steps; ++i) {
+
+        int executedSteps = 0;
+        final int steps = stepBehavior.getSteps(pattern.getKey());
+        int maxSteps = steps;
+        final int budget = cycleSafeStepBudgets.getOrDefault(pattern.getKey(), Integer.MAX_VALUE);
+        if (budget != Integer.MAX_VALUE) {
+            maxSteps = Math.min(maxSteps, budget);
+        }
+
+        for (int i = 0; i < maxSteps; ++i) {
             executedSteps++;
-            final PatternStepResult stepResult = taskPattern.step(internalStorage, rootStorage, sinkProvider, listener);
+            final PatternStepResult stepResult = pattern.getValue().step(
+                internalStorage,
+                rootStorage,
+                sinkProvider,
+                listener
+            );
             if (stepResult == PatternStepResult.COMPLETED) {
-                LOGGER.debug("{} completed", pattern);
                 return new StepExecutionResult(stepResult, executedSteps);
-            }
-            if (stepResult != PatternStepResult.IDLE) {
+            } else if (stepResult != PatternStepResult.IDLE) {
                 result = PatternStepResult.RUNNING;
             }
         }
+
         return new StepExecutionResult(result, executedSteps);
     }
 
@@ -294,7 +349,7 @@ final class CyclicTaskImpl extends TaskImpl {
             return 0;
         }
         long intercepted = 0;
-        for (final AbstractTaskPattern pattern : activePatterns.values()) {
+        for (final AbstractTaskPattern pattern : patterns.values()) {
             final long available = insertedAmount - intercepted;
             intercepted += pattern.beforeInsert(insertedResource, available);
             if (intercepted == insertedAmount) {
@@ -311,7 +366,7 @@ final class CyclicTaskImpl extends TaskImpl {
     @Override
     public long afterInsert(final ResourceKey insertedResource, final long insertedAmount) {
         long reserved = 0;
-        for (final AbstractTaskPattern pattern : activePatterns.values()) {
+        for (final AbstractTaskPattern pattern : patterns.values()) {
             final long available = insertedAmount - reserved;
             reserved += pattern.afterInsert(insertedResource, available);
             if (reserved == insertedAmount) {
@@ -327,7 +382,7 @@ final class CyclicTaskImpl extends TaskImpl {
     }
 
     private double progress() {
-        final int total = activePatterns.size() + completedPatterns.size();
+        final int total = patterns.size() + completedPatterns.size();
         if (total == 0) {
             return 1D;
         }
@@ -336,77 +391,13 @@ final class CyclicTaskImpl extends TaskImpl {
 
     private void recalculateStepSafeQueue() {
         cycleSafeStepBudgets.clear();
-
-        final CycleSafetyState cycleSafetyState = buildCycleSafetyState();
-        final Pattern plannerOverridePattern = findPlannerOverridePattern();
-
-        for (final Pattern pattern : plannerPatternOrder) {
-            if (activePatterns.containsKey(pattern)) {
-                final int budget = computeStepBudget(pattern, plannerOverridePattern, cycleSafetyState);
-                if (budget > 0) {
-                    cycleSafeStepBudgets.put(pattern, budget);
-                }
-            }
-        }
-
-        for (final Pattern pattern : activePatterns.keySet()) {
-            if (!cycleSafeStepBudgets.containsKey(pattern)) {
-                final int budget = computeStepBudget(pattern, plannerOverridePattern, cycleSafetyState);
-                if (budget > 0) {
-                    cycleSafeStepBudgets.put(pattern, budget);
-                }
-            }
-        }
-
+        cycleSafeStepBudgets.putAll(CycleSafeBudgetPlanner.computeStepBudgets(
+            patterns.keySet(),
+            plannerPatternOrder,
+            plannerOverrideRemainingSteps,
+            consumedResourcesByPattern
+        ));
         queueDirty = false;
-    }
-
-    private int computeStepBudget(final Pattern pattern,
-                                  final Pattern plannerOverridePattern,
-                                  final CycleSafetyState cycleSafetyState) {
-        if (isUnlimitedCycleSafe(pattern, cycleSafetyState)) {
-            return Integer.MAX_VALUE;
-        }
-        if (pattern.equals(plannerOverridePattern)) {
-            return Math.max(0, plannerOverrideRemainingSteps.getOrDefault(pattern, 0));
-        }
-        return 0;
-    }
-
-    private boolean isUnlimitedCycleSafe(final Pattern pattern,
-                                         final CycleSafetyState cycleSafetyState) {
-        final Set<ResourceKey> consumed = consumedResourcesByPattern.getOrDefault(pattern, Set.of());
-        final Set<ResourceKey> conflictedConsumed = new HashSet<>();
-        for (final ResourceKey resource : consumed) {
-            if (cycleSafetyState.conflictedResources.contains(resource)) {
-                conflictedConsumed.add(resource);
-            }
-        }
-
-        if (conflictedConsumed.isEmpty()) {
-            return true;
-        }
-
-        final Integer groupId = cycleSafetyState.cycleGroupByPattern.get(pattern);
-        if (groupId == null) {
-            return false;
-        }
-
-        final Set<ResourceKey> producedByGroup = cycleSafetyState.producedResourcesByCycleGroup
-            .getOrDefault(groupId, Set.of());
-        return producedByGroup.containsAll(conflictedConsumed);
-    }
-
-    private Pattern findPlannerOverridePattern() {
-        for (final Pattern pattern : plannerPatternOrder) {
-            if (!activePatterns.containsKey(pattern)) {
-                continue;
-            }
-            if (plannerOverrideRemainingSteps.getOrDefault(pattern, 0) > 0) {
-                return pattern;
-            }
-        }
-        return null;
     }
 
     private void consumeStepBudget(final Pattern pattern,
@@ -418,6 +409,7 @@ final class CyclicTaskImpl extends TaskImpl {
         if (budget == Integer.MAX_VALUE) {
             return;
         }
+
         final int remaining = Math.max(0, budget - executedSteps);
         if (remaining == 0) {
             cycleSafeStepBudgets.remove(pattern);
@@ -429,134 +421,23 @@ final class CyclicTaskImpl extends TaskImpl {
         }
     }
 
-    private CycleSafetyState buildCycleSafetyState() {
-        final Set<Pattern> active = activePatterns.keySet();
-        final Map<Pattern, Set<ResourceKey>> producedResourcesByPattern = new HashMap<>();
-        final Map<Pattern, Set<Pattern>> adjacency = new HashMap<>();
-
-        for (final Pattern pattern : active) {
-            producedResourcesByPattern.put(pattern, getProducedResources(pattern));
-            adjacency.put(pattern, new LinkedHashSet<>());
-        }
-
-        for (final Pattern source : active) {
-            final Set<ResourceKey> sourceProduces = producedResourcesByPattern.getOrDefault(source, Set.of());
-            for (final Pattern target : active) {
-                final Set<ResourceKey> targetConsumes = consumedResourcesByPattern.getOrDefault(target, Set.of());
-                if (!sourceProduces.isEmpty() && !targetConsumes.isEmpty() && intersects(sourceProduces, targetConsumes)) {
-                    adjacency.get(source).add(target);
-                }
-            }
-        }
-
-        final Map<Pattern, Set<Pattern>> reachable = new HashMap<>();
-        for (final Pattern pattern : active) {
-            reachable.put(pattern, dfsReachable(pattern, adjacency));
-        }
-
-        final Map<Pattern, Integer> groupByPattern = new HashMap<>();
-        final Map<Integer, Set<Pattern>> groups = new HashMap<>();
-        int groupId = 0;
-        for (final Pattern pattern : active) {
-            if (groupByPattern.containsKey(pattern)) {
-                continue;
-            }
-            final Set<Pattern> group = new LinkedHashSet<>();
-            group.add(pattern);
-            for (final Pattern other : active) {
-                if (pattern.equals(other)) {
-                    continue;
-                }
-                if (reachable.getOrDefault(pattern, Set.of()).contains(other)
-                    && reachable.getOrDefault(other, Set.of()).contains(pattern)) {
-                    group.add(other);
-                }
-            }
-            for (final Pattern member : group) {
-                groupByPattern.put(member, groupId);
-            }
-            groups.put(groupId, group);
-            groupId++;
-        }
-
-        final Map<Integer, Set<ResourceKey>> producedByCycleGroup = new HashMap<>();
-        final Set<Pattern> cyclePatterns = new HashSet<>();
-        for (final var entry : groups.entrySet()) {
-            final int id = entry.getKey();
-            final Set<Pattern> group = entry.getValue();
-            final boolean selfCycle = group.size() == 1
-                && adjacency.getOrDefault(group.iterator().next(), Set.of()).contains(group.iterator().next());
-            final boolean isCycle = group.size() > 1 || selfCycle;
-            if (!isCycle) {
-                continue;
-            }
-            final Set<ResourceKey> produced = new HashSet<>();
-            for (final Pattern pattern : group) {
-                cyclePatterns.add(pattern);
-                produced.addAll(producedResourcesByPattern.getOrDefault(pattern, Set.of()));
-            }
-            producedByCycleGroup.put(id, produced);
-        }
-
-        final Set<ResourceKey> producedInCycles = new HashSet<>();
-        final Set<ResourceKey> consumedInCycles = new HashSet<>();
-        for (final Pattern pattern : cyclePatterns) {
-            producedInCycles.addAll(producedResourcesByPattern.getOrDefault(pattern, Set.of()));
-            consumedInCycles.addAll(consumedResourcesByPattern.getOrDefault(pattern, Set.of()));
-        }
-        final Set<ResourceKey> conflicted = new HashSet<>(producedInCycles);
-        conflicted.retainAll(consumedInCycles);
-
-        return new CycleSafetyState(groupByPattern, producedByCycleGroup, conflicted);
-    }
-
-    private static Set<Pattern> dfsReachable(final Pattern start,
-                                             final Map<Pattern, Set<Pattern>> adjacency) {
-        final Set<Pattern> visited = new LinkedHashSet<>();
-        final List<Pattern> stack = new ArrayList<>();
-        stack.add(start);
-        while (!stack.isEmpty()) {
-            final Pattern current = stack.removeLast();
-            if (!visited.add(current)) {
-                continue;
-            }
-            for (final Pattern next : adjacency.getOrDefault(current, Set.of())) {
-                if (!visited.contains(next)) {
-                    stack.add(next);
-                }
-            }
-        }
-        return visited;
-    }
-
-    private static boolean intersects(final Set<ResourceKey> left,
-                                      final Set<ResourceKey> right) {
-        for (final ResourceKey resource : left) {
-            if (right.contains(resource)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static Set<ResourceKey> getProducedResources(final Pattern pattern) {
-        final Set<ResourceKey> produced = new LinkedHashSet<>();
-        pattern.layout().outputs().forEach(output -> produced.add(output.resource()));
-        pattern.layout().byproducts().forEach(byproduct -> produced.add(byproduct.resource()));
-        return produced;
-    }
-
     private static CyclicMergedPlan toMergedPlan(final ResourceKey requestedResource,
                                                   final long requestedAmount,
-                                                  final List<RecipeApplicationStep> steps,
+                                                  final List<DesanitizedRecipeApplicationStep> steps,
                                                   final Map<UUID, Pattern> patternsById,
                                                   final Pattern rootPattern) {
         final Map<Pattern, MutablePatternPlan> mutablePlans = new LinkedHashMap<>();
 
-        for (final RecipeApplicationStep step : steps) {
+        for (final DesanitizedRecipeApplicationStep step : steps) {
             final Pattern stepPattern = TaskDispatcher.requirePattern(step.recipe(), patternsById);
             final boolean root = stepPattern.equals(rootPattern);
-            final TaskPlan stepPlan = TaskDispatcher.translateLpStepToTaskPlan(requestedResource, -1, step, patternsById, root);
+            final TaskPlan stepPlan = TaskDispatcher.translateLpStepToTaskPlan(
+                requestedResource,
+                -1,
+                step,
+                patternsById,
+                root
+            );
             final var entry = stepPlan.patterns().entrySet().iterator().next();
 
             final Pattern pattern = entry.getKey();
@@ -586,18 +467,29 @@ final class CyclicTaskImpl extends TaskImpl {
         for (final var entry : mutablePlans.entrySet()) {
             final Pattern pattern = entry.getKey();
             final MutablePatternPlan mutable = entry.getValue();
+            final long totalIterations = mutable.iterations;
+            final Map<Integer, Map<ResourceKey, Long>> redistributedIngredients = redistributeIngredientTotals(
+                pattern,
+                totalIterations,
+                mutable.ingredients
+            );
             final Map<Integer, Map<ResourceKey, Long>> immutableIngredients = new LinkedHashMap<>();
 
-            for (final var ingredientEntry : mutable.ingredients.entrySet()) {
-                immutableIngredients.put(ingredientEntry.getKey(), Map.copyOf(ingredientEntry.getValue()));
-                ingredientEntry.getValue().forEach((resource, amount) -> totalInputs.merge(resource, amount, Long::sum));
+            for (final var ingredientEntry : redistributedIngredients.entrySet()) {
+                final int ingredientIndex = ingredientEntry.getKey();
+                final Map<ResourceKey, Long> orderedByInputPreference = orderByIngredientInputPreference(
+                    pattern,
+                    ingredientIndex,
+                    ingredientEntry.getValue()
+                );
+                immutableIngredients.put(ingredientIndex, Map.copyOf(orderedByInputPreference));
+                orderedByInputPreference.forEach((resource, amount) -> totalInputs.merge(resource, amount, Long::sum));
             }
 
             final Set<ResourceKey> consumedResources = new LinkedHashSet<>();
             immutableIngredients.values().forEach(ingredientResources -> consumedResources.addAll(ingredientResources.keySet()));
             consumedResourcesByPattern.put(pattern, Set.copyOf(consumedResources));
 
-            final long totalIterations = mutable.iterations;
             plannerOverrideInitialSteps.put(pattern, (int) Math.min(Integer.MAX_VALUE, Math.max(0L, totalIterations)));
             pattern.layout().outputs().forEach(output ->
                 totalProduced.merge(output.resource(), output.amount() * totalIterations, Long::sum));
@@ -624,15 +516,101 @@ final class CyclicTaskImpl extends TaskImpl {
         );
     }
 
+    private static Map<ResourceKey, Long> orderByIngredientInputPreference(final Pattern pattern,
+                                                                            final int ingredientIndex,
+                                                                            final Map<ResourceKey, Long> amounts) {
+        final LinkedHashMap<ResourceKey, Long> ordered = new LinkedHashMap<>();
+        final List<ResourceKey> preferredOrder = pattern.layout().ingredients().get(ingredientIndex).inputs();
+
+        for (final ResourceKey resource : preferredOrder) {
+            final Long amount = amounts.get(resource);
+            if (amount != null && amount > 0) {
+                ordered.put(resource, amount);
+            }
+        }
+        amounts.forEach((resource, amount) -> {
+            if (amount > 0) {
+                ordered.putIfAbsent(resource, amount);
+            }
+        });
+        return ordered;
+    }
+
+    private static Map<Integer, Map<ResourceKey, Long>> redistributeIngredientTotals(final Pattern pattern,
+                                                                                      final long totalIterations,
+                                                                                      final Map<Integer, Map<ResourceKey, Long>> mergedIngredients) {
+        final Map<ResourceKey, Long> remainingByResource = new LinkedHashMap<>();
+        mergedIngredients.values().forEach(resources -> resources.forEach(
+            (resource, amount) -> remainingByResource.merge(resource, amount, Long::sum)
+        ));
+
+        final Map<Integer, Map<ResourceKey, Long>> redistributed = new LinkedHashMap<>();
+        for (int ingredientIndex = 0; ingredientIndex < pattern.layout().ingredients().size(); ingredientIndex++) {
+            final long requiredTotal = pattern.layout().ingredients().get(ingredientIndex).amount() * totalIterations;
+            long remainingRequired = requiredTotal;
+            final LinkedHashMap<ResourceKey, Long> assigned = new LinkedHashMap<>();
+
+            for (final ResourceKey preferred : pattern.layout().ingredients().get(ingredientIndex).inputs()) {
+                final long available = remainingByResource.getOrDefault(preferred, 0L);
+                if (available <= 0 || remainingRequired <= 0) {
+                    continue;
+                }
+                final long taken = Math.min(remainingRequired, available);
+                assigned.put(preferred, taken);
+                remainingByResource.put(preferred, available - taken);
+                remainingRequired -= taken;
+            }
+
+            if (remainingRequired > 0) {
+                for (final var entry : remainingByResource.entrySet()) {
+                    if (remainingRequired <= 0) {
+                        break;
+                    }
+                    final long available = entry.getValue();
+                    if (available <= 0) {
+                        continue;
+                    }
+                    final long taken = Math.min(remainingRequired, available);
+                    assigned.merge(entry.getKey(), taken, Long::sum);
+                    entry.setValue(available - taken);
+                    remainingRequired -= taken;
+                }
+            }
+
+            redistributed.put(ingredientIndex, assigned);
+        }
+
+        return redistributed;
+    }
+
+    private static long getPatternWeight(final AbstractTaskPattern pattern) {
+        return invokePatternMethod(pattern, "getWeight", Long.class);
+    }
+
+    private static double getPatternPercentageCompleted(final AbstractTaskPattern pattern) {
+        return invokePatternMethod(pattern, "getPercentageCompleted", Double.class);
+    }
+
+    private static TaskSnapshot.PatternSnapshot createPatternSnapshot(final AbstractTaskPattern pattern) {
+        return invokePatternMethod(pattern, "createSnapshot", TaskSnapshot.PatternSnapshot.class);
+    }
+
+    private static <T> T invokePatternMethod(final AbstractTaskPattern pattern,
+                                             final String methodName,
+                                             final Class<T> returnType) {
+        try {
+            final Method method = pattern.getClass().getDeclaredMethod(methodName);
+            method.setAccessible(true);
+            return returnType.cast(method.invoke(pattern));
+        } catch (final ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to invoke " + methodName + " on " + pattern.getClass(), e);
+        }
+    }
+
     private record CyclicMergedPlan(Map<Pattern, TaskPlan.PatternPlan> patternPlans,
                                     List<ResourceAmount> initialRequirements,
                                     Map<Pattern, Set<ResourceKey>> consumedResourcesByPattern,
                                     Map<Pattern, Integer> plannerOverrideInitialSteps) {
-    }
-
-    private record CycleSafetyState(Map<Pattern, Integer> cycleGroupByPattern,
-                                    Map<Integer, Set<ResourceKey>> producedResourcesByCycleGroup,
-                                    Set<ResourceKey> conflictedResources) {
     }
 
     private record StepExecutionResult(PatternStepResult result,

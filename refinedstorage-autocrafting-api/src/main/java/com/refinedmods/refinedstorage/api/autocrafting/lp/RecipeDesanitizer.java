@@ -269,23 +269,105 @@ public final class RecipeDesanitizer {
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
-        final List<RecipeApplicationStep> decodedSteps = decodePlanSteps(
+        final DesanitizedRecipeApplicationPath desanitizedPath = decodeRecipeApplicationPathToDesanitized(
+            path,
+            sanitizedStartingResources,
+            cancellationToken
+        );
+
+        final List<RecipeApplicationStep> decodedSteps = desanitizedPath.steps().stream()
+            .map(step -> new RecipeApplicationStep(
+                new SanitizedRecipe(
+                    step.recipe().recipeId(),
+                    step.recipe().sourcePatternId(),
+                    toResourcePool(step.recipe().input()),
+                    toResourcePool(step.recipe().output()),
+                    step.recipe().priority(),
+                    step.recipe().insertionOrder()
+                ),
+                step.timesApplied()
+            ))
+            .toList();
+
+        final List<SanitizedRecipe> recipes = desanitizedPath.applicationSet().recipes().stream()
+            .map(recipe -> new SanitizedRecipe(
+                recipe.recipeId(),
+                recipe.sourcePatternId(),
+                toResourcePool(recipe.input()),
+                toResourcePool(recipe.output()),
+                recipe.priority(),
+                recipe.insertionOrder()
+            ))
+            .toList();
+
+        final Map<java.util.UUID, SanitizedRecipe> recipesById = recipes.stream().collect(java.util.stream.Collectors.toMap(
+            SanitizedRecipe::recipeId,
+            recipe -> recipe,
+            (a, b) -> a,
+            LinkedHashMap::new
+        ));
+
+        final Map<SanitizedRecipe, Long> recipeValues = new LinkedHashMap<>();
+        desanitizedPath.applicationSet().recipeValues().forEach((recipe, amount) -> {
+            final SanitizedRecipe sanitizedRecipe = recipesById.get(recipe.recipeId());
+            if (sanitizedRecipe != null) {
+                recipeValues.put(sanitizedRecipe, amount);
+            }
+        });
+
+        final RecipeApplicationSet decodedSet = new RecipeApplicationSet(
+            recipes,
+            recipeValues,
+            toResourcePool(desanitizedPath.applicationSet().usedResources()),
+            toResourcePool(desanitizedPath.applicationSet().finalInventoryValues()),
+            toResourcePool(desanitizedPath.applicationSet().missingResources()),
+            desanitizedPath.applicationSet().relevantResourceKeys().stream()
+                .map(key -> new MultiResourceKey(List.of(key)))
+                .toList()
+        );
+
+        final ResourcePool decodedPeakUsage = toResourcePool(desanitizedPath.peakResourceUsage());
+
+        return new RecipeApplicationPath(decodedSet, decodedSteps, decodedPeakUsage, desanitizedPath.hasCycles());
+    }
+
+    public static DesanitizedRecipeApplicationPath decodeRecipeApplicationPathToDesanitized(
+        final RecipeApplicationPath path,
+        final Map<ResourceKey, Long> sanitizedStartingResources,
+        final CancellationToken cancellationToken
+    ) {
+        Objects.requireNonNull(path, "path cannot be null");
+        Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        throwIfCancelled(cancellationToken);
+
+        final List<DesanitizedRecipeApplicationStep> decodedSteps = decodePlanStepsToDesanitized(
             path.steps(),
             sanitizedStartingResources,
             cancellationToken
         );
-        final RecipeApplicationSet decodedSet = decodeRecipeApplicationSet(
+        final DesanitizedRecipeApplicationSet decodedSet = convertToDesanitized(
             path.applicationSet(),
             sanitizedStartingResources,
             cancellationToken
         );
-        final ResourcePool decodedPeakUsage = decodeSanitizedResourcePool(
+        final Map<ResourceKey, Long> decodedPeakUsage = decodeSanitizedResourcePoolToDesanitized(
             path.peakResourceUsage(),
             sanitizedStartingResources,
             cancellationToken
         );
 
-        return new RecipeApplicationPath(decodedSet, decodedSteps, decodedPeakUsage, path.hasCycles());
+        return new DesanitizedRecipeApplicationPath(decodedSet, decodedSteps, decodedPeakUsage, path.hasCycles());
+    }
+
+    private static ResourcePool toResourcePool(final Map<ResourceKey, Long> resources) {
+        final ResourcePool result = ResourcePool.empty();
+        for (final var entry : resources.entrySet()) {
+            if (entry.getValue() > 0L) {
+                result.addAmount(new MultiResourceKey(List.of(entry.getKey())), entry.getValue());
+            }
+        }
+        return result;
     }
 
     // Converts an LP MultiResourceKey to a single RS ResourceKey by extracting the first member.
@@ -408,8 +490,9 @@ public final class RecipeDesanitizer {
             long currentBatchTimesApplied = 0L;
             for (long index = 0L; index < step.timesApplied(); index++) {
                 throwIfCancelled(cancellationToken);
-                final Map<ResourceKey, Long> sanitizedInput = decodeSanitizedResourcesToDesanitized(
+                final Map<ResourceKey, Long> sanitizedInput = decodeSanitizedResourcePoolToDesanitizedWithRemaining(
                     recipe.input(),
+                    remainingSanitizedStorage,
                     cancellationToken
                 );
                 if (currentInput != null && currentInput.equals(sanitizedInput)) {
@@ -448,6 +531,23 @@ public final class RecipeDesanitizer {
             }
         }
         return List.copyOf(decodedSteps);
+    }
+
+    private static Map<ResourceKey, Long> decodeSanitizedResourcePoolToDesanitizedWithRemaining(
+        final ResourcePool sanitizedResources,
+        final Map<ResourceKey, Long> remainingSanitizedStorage,
+        final CancellationToken cancellationToken
+    ) {
+        final Map<ResourceKey, Long> decoded = new LinkedHashMap<>();
+        for (final Map.Entry<MultiResourceKey, Long> entry : sanitizedResources) {
+            throwIfCancelled(cancellationToken);
+            final long amount = entry.getValue();
+            if (amount <= 0L) {
+                continue;
+            }
+            allocateIntoDesanitizedMap(decoded, entry.getKey(), amount, remainingSanitizedStorage);
+        }
+        return decoded;
     }
 
     // Converts a sanitized output ResourcePool to a desanitized map, taking only the first member of each MRK.

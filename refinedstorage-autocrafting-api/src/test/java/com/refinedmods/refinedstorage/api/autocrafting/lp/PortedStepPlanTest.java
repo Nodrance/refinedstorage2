@@ -4,10 +4,6 @@ import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToke
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.MultiResourceKey;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.RecipeApplicationPath;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.ResourcePool;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
@@ -36,7 +32,7 @@ class PortedStepPlanTest {
         final RootStorage storage = storage();
         final PatternRepository patterns = patterns(OAK_PLANKS_PATTERN);
 
-        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> optionalPlan = calculateCraftablePath(
             storage,
             patterns,
             OAK_PLANKS,
@@ -52,7 +48,7 @@ class PortedStepPlanTest {
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 1));
         final PatternRepository patterns = patterns(OAK_PLANKS_PATTERN);
 
-        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> optionalPlan = calculateCraftablePath(
             storage,
             patterns,
             OAK_PLANKS,
@@ -61,7 +57,7 @@ class PortedStepPlanTest {
         );
 
         assertThat(optionalPlan).isPresent();
-        final RecipeApplicationPath plan = optionalPlan.orElseThrow();
+        final DesanitizedRecipeApplicationPath plan = optionalPlan.orElseThrow();
         assertThat(plan.steps()).hasSize(1);
         assertThat(totalTimesAppliedForPattern(plan, OAK_PLANKS_PATTERN)).isEqualTo(1L);
         assertThat(getAmount(plan.applicationSet().usedResources(), OAK_LOG)).isEqualTo(1L);
@@ -84,7 +80,7 @@ class PortedStepPlanTest {
                 .build()
         );
 
-        final Optional<RecipeApplicationPath> plan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> plan = calculateCraftablePath(
             storage,
             patterns,
             OAK_PLANKS,
@@ -104,7 +100,7 @@ class PortedStepPlanTest {
         );
         final PatternRepository patterns = patterns(OAK_PLANKS_PATTERN, SPRUCE_PLANKS_PATTERN, CRAFTING_TABLE_PATTERN);
 
-        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> optionalPlan = calculateCraftablePath(
             storage,
             patterns,
             CRAFTING_TABLE,
@@ -113,7 +109,7 @@ class PortedStepPlanTest {
         );
 
         assertThat(optionalPlan).isPresent();
-        final RecipeApplicationPath plan = optionalPlan.orElseThrow();
+        final DesanitizedRecipeApplicationPath plan = optionalPlan.orElseThrow();
         assertThat(getAmount(plan.applicationSet().usedResources(), OAK_LOG)).isEqualTo(1L);
         assertThat(getAmount(plan.applicationSet().usedResources(), SPRUCE_LOG)).isEqualTo(1L);
         assertThat(getAmount(plan.applicationSet().usedResources(), OAK_PLANKS)).isGreaterThanOrEqualTo(4L);
@@ -132,7 +128,7 @@ class PortedStepPlanTest {
         );
         final PatternRepository patterns = patterns(OAK_PLANKS_PATTERN, SPRUCE_PLANKS_PATTERN, CRAFTING_TABLE_PATTERN);
 
-        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> optionalPlan = calculateCraftablePath(
             storage,
             patterns,
             CRAFTING_TABLE,
@@ -141,7 +137,7 @@ class PortedStepPlanTest {
         );
 
         assertThat(optionalPlan).isPresent();
-        final RecipeApplicationPath plan = optionalPlan.orElseThrow();
+        final DesanitizedRecipeApplicationPath plan = optionalPlan.orElseThrow();
 
         assertThatThrownBy(() -> plan.steps().add(plan.steps().getFirst()))
             .isInstanceOf(UnsupportedOperationException.class);
@@ -156,7 +152,7 @@ class PortedStepPlanTest {
         final RootStorage storage = storage(new ResourceAmount(OAK_LOG, 1));
         final PatternRepository patterns = patterns(OAK_PLANKS_PATTERN);
 
-        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> optionalPlan = calculateCraftablePath(
             storage,
             patterns,
             OAK_PLANKS,
@@ -177,7 +173,7 @@ class PortedStepPlanTest {
                 .build()
         );
 
-        final Optional<RecipeApplicationPath> optionalPlan = calculateCraftablePath(
+        final Optional<DesanitizedRecipeApplicationPath> optionalPlan = calculateCraftablePath(
             storage,
             patterns,
             OAK_PLANKS,
@@ -189,7 +185,7 @@ class PortedStepPlanTest {
     }
 
     // --- Helper methods below ---
-    private static Optional<RecipeApplicationPath> calculateCraftablePath(
+    private static Optional<DesanitizedRecipeApplicationPath> calculateCraftablePath(
         final RootStorage storage,
         final PatternRepository patterns,
         final ResourceKey resource,
@@ -200,11 +196,11 @@ class PortedStepPlanTest {
             .filter(path -> path.applicationSet().missingResources().isEmpty());
     }
 
-    private static long getAmount(final ResourcePool pool, final ResourceKey resource) {
-        return pool.getAmount(new MultiResourceKey(List.of(resource)));
+    private static long getAmount(final java.util.Map<ResourceKey, Long> resources, final ResourceKey resource) {
+        return resources.getOrDefault(resource, 0L);
     }
 
-    private static long totalTimesAppliedForPattern(final RecipeApplicationPath path, final Pattern pattern) {
+    private static long totalTimesAppliedForPattern(final DesanitizedRecipeApplicationPath path, final Pattern pattern) {
         return path.steps().stream()
             .filter(step -> step.recipe().sourcePatternId().equals(pattern.id()))
             .mapToLong(step -> step.timesApplied())

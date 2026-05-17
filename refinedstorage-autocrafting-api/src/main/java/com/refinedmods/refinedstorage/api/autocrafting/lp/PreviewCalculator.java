@@ -124,6 +124,81 @@ public final class PreviewCalculator {
         return new Preview(type, List.copyOf(items), Collections.<ResourceAmount>emptyList());
     }
 
+    public static Preview calculatePreview(final DesanitizedRecipeApplicationPath path) {
+        return calculatePreview(path, Set.of(), CancellationToken.NONE);
+    }
+
+    public static Preview calculatePreview(
+        final DesanitizedRecipeApplicationPath path,
+        final CancellationToken cancellationToken
+    ) {
+        return calculatePreview(path, Set.of(), cancellationToken);
+    }
+
+    public static Preview calculatePreview(
+        final DesanitizedRecipeApplicationPath path,
+        final Set<ResourceKey> targetResources,
+        final CancellationToken cancellationToken
+    ) {
+        Objects.requireNonNull(path, "path cannot be null");
+        Objects.requireNonNull(targetResources, "targetResources cannot be null");
+        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        throwIfCancelled(cancellationToken);
+
+        final DesanitizedRecipeApplicationSet applicationSet = path.applicationSet();
+        final Map<ResourceKey, Long> crafted = computeCraftedAmounts(path, cancellationToken);
+        final Map<ResourceKey, Long> used = toPositiveMap(applicationSet.usedResources());
+        final Map<ResourceKey, Long> missing = toPositiveMap(applicationSet.missingResources());
+        final Map<ResourceKey, Long> finalInventory = toRawMap(applicationSet.finalInventoryValues());
+
+        final Set<ResourceKey> universe = new LinkedHashSet<>();
+        universe.addAll(applicationSet.relevantResourceKeys());
+        universe.addAll(crafted.keySet());
+        universe.addAll(used.keySet());
+        universe.addAll(missing.keySet());
+        universe.addAll(finalInventory.keySet());
+
+        final Map<ResourceKey, Long> available = new LinkedHashMap<>();
+        for (final ResourceKey resource : universe) {
+            throwIfCancelled(cancellationToken);
+            final long usedAmount = used.getOrDefault(resource, 0L);
+            final long craftedAmount = crafted.getOrDefault(resource, 0L);
+            final long finalAmount = finalInventory.getOrDefault(resource, 0L);
+            final long estimatedStarting = finalAmount - craftedAmount + usedAmount;
+            final long availableAmount = Math.min(usedAmount, Math.max(0L, estimatedStarting));
+            if (availableAmount > 0L) {
+                available.put(resource, availableAmount);
+            }
+        }
+
+        final Map<ResourceKey, Amounts> byResource = new LinkedHashMap<>();
+        for (final ResourceKey resource : universe) {
+            throwIfCancelled(cancellationToken);
+            final long availableAmount = available.getOrDefault(resource, 0L);
+            final long missingAmount = missing.getOrDefault(resource, 0L);
+            final long craftedAmount = crafted.getOrDefault(resource, 0L);
+            if (availableAmount > 0L || missingAmount > 0L || craftedAmount > 0L) {
+                byResource.put(resource, new Amounts(availableAmount, missingAmount, craftedAmount));
+            }
+        }
+
+        removeCraftedButUnusedRecipeResourcesDesanitized(path.steps(), byResource, targetResources, cancellationToken);
+
+        final List<ResourceKey> orderedResources = orderResourcesDesanitized(path.steps(), byResource.keySet(), cancellationToken);
+        final List<PreviewItem> items = new ArrayList<>(orderedResources.size());
+        for (final ResourceKey resource : orderedResources) {
+            throwIfCancelled(cancellationToken);
+            final Amounts amounts = byResource.get(resource);
+            if (amounts == null) {
+                continue;
+            }
+            items.add(new PreviewItem(resource, amounts.available(), amounts.missing(), amounts.toCraft()));
+        }
+
+        final PreviewType type = missing.isEmpty() ? PreviewType.SUCCESS : PreviewType.MISSING_RESOURCES;
+        return new Preview(type, List.copyOf(items), Collections.emptyList());
+    }
+
     private static Map<ResourceKey, Long> computeCraftedAmounts(
         final RecipeApplicationPath path,
         final CancellationToken cancellationToken
@@ -139,6 +214,27 @@ public final class PreviewCalculator {
                 final long produced = output.getValue() * step.timesApplied();
                 if (produced > 0L) {
                     crafted.merge(toPreviewResourceKey(output.getKey()), produced, Long::sum);
+                }
+            }
+        }
+        return crafted;
+    }
+
+    private static Map<ResourceKey, Long> computeCraftedAmounts(
+        final DesanitizedRecipeApplicationPath path,
+        final CancellationToken cancellationToken
+    ) {
+        final Map<ResourceKey, Long> crafted = new LinkedHashMap<>();
+        for (final DesanitizedRecipeApplicationStep step : path.steps()) {
+            throwIfCancelled(cancellationToken);
+            if (step.timesApplied() <= 0L) {
+                continue;
+            }
+            for (final Map.Entry<ResourceKey, Long> output : step.recipe().output().entrySet()) {
+                throwIfCancelled(cancellationToken);
+                final long produced = output.getValue() * step.timesApplied();
+                if (produced > 0L) {
+                    crafted.merge(output.getKey(), produced, Long::sum);
                 }
             }
         }
@@ -167,6 +263,24 @@ public final class PreviewCalculator {
         for (final Map.Entry<MultiResourceKey, Long> entry : pool) {
             throwIfCancelled(cancellationToken);
             result.merge(toPreviewResourceKey(entry.getKey()), entry.getValue(), Long::sum);
+        }
+        return result;
+    }
+
+    private static Map<ResourceKey, Long> toPositiveMap(final Map<ResourceKey, Long> resources) {
+        final Map<ResourceKey, Long> result = new LinkedHashMap<>();
+        for (final var entry : resources.entrySet()) {
+            if (entry.getValue() > 0L) {
+                result.merge(entry.getKey(), entry.getValue(), Long::sum);
+            }
+        }
+        return result;
+    }
+
+    private static Map<ResourceKey, Long> toRawMap(final Map<ResourceKey, Long> resources) {
+        final Map<ResourceKey, Long> result = new LinkedHashMap<>();
+        for (final var entry : resources.entrySet()) {
+            result.merge(entry.getKey(), entry.getValue(), Long::sum);
         }
         return result;
     }
@@ -250,6 +364,80 @@ public final class PreviewCalculator {
             .toList();
     }
 
+    private static List<ResourceKey> orderResourcesDesanitized(
+        final List<DesanitizedRecipeApplicationStep> steps,
+        final Set<ResourceKey> nodes,
+        final CancellationToken cancellationToken
+    ) {
+        if (nodes.isEmpty()) {
+            return List.of();
+        }
+
+        final Map<ResourceKey, Set<ResourceKey>> edges = new HashMap<>();
+        final Map<ResourceKey, Integer> indegree = new HashMap<>();
+        final Map<ResourceKey, Integer> firstIndex = new HashMap<>();
+        int nextIndex = 0;
+        for (final ResourceKey node : nodes) {
+            edges.put(node, new LinkedHashSet<>());
+            indegree.put(node, 0);
+            firstIndex.put(node, nextIndex++);
+        }
+
+        for (final DesanitizedRecipeApplicationStep step : steps) {
+            throwIfCancelled(cancellationToken);
+            if (step.timesApplied() <= 0L) {
+                continue;
+            }
+            for (final Map.Entry<ResourceKey, Long> output : step.recipe().output().entrySet()) {
+                throwIfCancelled(cancellationToken);
+                final ResourceKey outputResource = output.getKey();
+                if (!nodes.contains(outputResource)) {
+                    continue;
+                }
+                for (final Map.Entry<ResourceKey, Long> input : step.recipe().input().entrySet()) {
+                    final ResourceKey inputResource = input.getKey();
+                    if (!nodes.contains(inputResource) || outputResource.equals(inputResource)) {
+                        continue;
+                    }
+                    if (edges.get(outputResource).add(inputResource)) {
+                        indegree.put(inputResource, indegree.get(inputResource) + 1);
+                    }
+                }
+            }
+        }
+
+        final ArrayDeque<ResourceKey> queue = new ArrayDeque<>();
+        nodes.stream()
+            .filter(node -> indegree.get(node) == 0)
+            .sorted(Comparator.comparingInt(firstIndex::get))
+            .forEach(queue::addLast);
+
+        final List<ResourceKey> ordered = new ArrayList<>(nodes.size());
+        while (!queue.isEmpty()) {
+            throwIfCancelled(cancellationToken);
+            final ResourceKey node = queue.removeFirst();
+            ordered.add(node);
+            final List<ResourceKey> dependents = edges.get(node).stream()
+                .sorted(Comparator.comparingInt(firstIndex::get))
+                .toList();
+            for (final ResourceKey dependent : dependents) {
+                final int next = indegree.get(dependent) - 1;
+                indegree.put(dependent, next);
+                if (next == 0) {
+                    queue.addLast(dependent);
+                }
+            }
+        }
+
+        if (ordered.size() == nodes.size()) {
+            return List.copyOf(ordered);
+        }
+
+        return nodes.stream()
+            .sorted(Comparator.comparingInt(firstIndex::get))
+            .toList();
+    }
+
     private static long sumValues(final Map<ResourceKey, Long> values) {
         long total = 0L;
         for (final long value : values.values()) {
@@ -274,6 +462,37 @@ public final class PreviewCalculator {
                 throwIfCancelled(cancellationToken);
                 if (input.getValue() > 0L) {
                     resourcesUsedInRecipes.add(toPreviewResourceKey(input.getKey()));
+                }
+            }
+        }
+
+        byResource.entrySet().removeIf(entry -> {
+            throwIfCancelled(cancellationToken);
+            final Amounts amounts = entry.getValue();
+            return amounts.available() == 0L
+                && amounts.missing() == 0L
+                && amounts.toCraft() > 0L
+                && !targetResources.contains(entry.getKey())
+                && !resourcesUsedInRecipes.contains(entry.getKey());
+        });
+    }
+
+    private static void removeCraftedButUnusedRecipeResourcesDesanitized(
+        final List<DesanitizedRecipeApplicationStep> steps,
+        final Map<ResourceKey, Amounts> byResource,
+        final Set<ResourceKey> targetResources,
+        final CancellationToken cancellationToken
+    ) {
+        final Set<ResourceKey> resourcesUsedInRecipes = new LinkedHashSet<>();
+        for (final DesanitizedRecipeApplicationStep step : steps) {
+            throwIfCancelled(cancellationToken);
+            if (step.timesApplied() <= 0L) {
+                continue;
+            }
+            for (final Map.Entry<ResourceKey, Long> input : step.recipe().input().entrySet()) {
+                throwIfCancelled(cancellationToken);
+                if (input.getValue() > 0L) {
+                    resourcesUsedInRecipes.add(input.getKey());
                 }
             }
         }

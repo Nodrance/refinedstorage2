@@ -1433,13 +1433,13 @@ class PortedTaskImplTest {
                                 final PatternRepository patterns,
                                 final ResourceKey resource,
                                 final long amount) {
-        final RecipeApplicationPath path = CraftingInitializer.solveToStepPlan(
+        final DesanitizedRecipeApplicationPath path = CraftingInitializer.solveToStepPlan(
             storage,
             patterns,
             resource,
             amount,
             CancellationToken.NONE
-        ).filter(RecipeApplicationPath::hasCycles).orElseThrow();
+        ).filter(DesanitizedRecipeApplicationPath::hasCycles).orElseThrow();
 
         final java.util.Map<java.util.UUID, Pattern> patternsById = indexPatterns(patterns.getAll());
         final Pattern rootPattern = findRootPattern(resource, path.steps(), patternsById);
@@ -1486,9 +1486,9 @@ class PortedTaskImplTest {
     }
 
     private static Pattern findRootPattern(final ResourceKey resource,
-                                           final java.util.List<RecipeApplicationStep> steps,
+                                           final java.util.List<DesanitizedRecipeApplicationStep> steps,
                                            final java.util.Map<java.util.UUID, Pattern> patternsById) {
-        for (final RecipeApplicationStep step : steps) {
+        for (final DesanitizedRecipeApplicationStep step : steps) {
             final Pattern pattern = patternsById.get(step.recipe().sourcePatternId());
             if (pattern != null && pattern.layout().outputs().stream().anyMatch(o -> o.resource().equals(resource))) {
                 return pattern;
