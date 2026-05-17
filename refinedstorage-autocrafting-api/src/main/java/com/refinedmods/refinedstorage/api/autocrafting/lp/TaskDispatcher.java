@@ -150,13 +150,15 @@ public final class TaskDispatcher {
                 }
             }
             final long totalAmount = ingredient.amount() * iterations;
-            ingredients.put(ingredientIndex, Map.of(resource, totalAmount));
+            final Map<ResourceKey, Long> orderedIngredientResources = new LinkedHashMap<>();
+            orderedIngredientResources.put(resource, totalAmount);
+            ingredients.put(ingredientIndex, orderedIngredientResources);
             initialRequirements.add(new ResourceAmount(resource, totalAmount));
         }
 
         final Map<Pattern, TaskPlan.PatternPlan> patterns = Map.of(
             pattern,
-            new TaskPlan.PatternPlan(root, iterations, Map.copyOf(ingredients))
+            new TaskPlan.PatternPlan(root, iterations, new LinkedHashMap<>(ingredients))
         );
 
         final ResourceKey outputResource = pattern.layout().outputs().isEmpty()
@@ -200,13 +202,15 @@ public final class TaskDispatcher {
                 }
             }
             final long totalAmount = ingredient.amount() * iterations;
-            ingredients.put(ingredientIndex, Map.of(resource, totalAmount));
+            final Map<ResourceKey, Long> orderedIngredientResources = new LinkedHashMap<>();
+            orderedIngredientResources.put(resource, totalAmount);
+            ingredients.put(ingredientIndex, orderedIngredientResources);
             initialRequirements.add(new ResourceAmount(resource, totalAmount));
         }
 
         final Map<Pattern, TaskPlan.PatternPlan> patterns = Map.of(
             pattern,
-            new TaskPlan.PatternPlan(root, iterations, Map.copyOf(ingredients))
+            new TaskPlan.PatternPlan(root, iterations, new LinkedHashMap<>(ingredients))
         );
 
         final ResourceKey outputResource = pattern.layout().outputs().isEmpty()
@@ -279,7 +283,7 @@ public final class TaskDispatcher {
             final Map<Integer, Map<ResourceKey, Long>> immutableIngredients = new LinkedHashMap<>();
 
             for (final var ingredientEntry : mutable.ingredients.entrySet()) {
-                immutableIngredients.put(ingredientEntry.getKey(), Map.copyOf(ingredientEntry.getValue()));
+                immutableIngredients.put(ingredientEntry.getKey(), new LinkedHashMap<>(ingredientEntry.getValue()));
                 ingredientEntry.getValue().forEach((resource, amount) ->
                     totalInputs.merge(resource, amount, Long::sum));
             }
@@ -293,7 +297,7 @@ public final class TaskDispatcher {
             patterns.put(pattern, new TaskPlan.PatternPlan(
                 mutable.root,
                 totalIterations,
-                Map.copyOf(immutableIngredients)
+                new LinkedHashMap<>(immutableIngredients)
             ));
         }
 
@@ -310,7 +314,7 @@ public final class TaskDispatcher {
             requestedResource,
             requestedAmount,
             rootPattern,
-            Map.copyOf(patterns),
+            new LinkedHashMap<>(patterns),
             List.copyOf(initialRequirements)
         );
     }

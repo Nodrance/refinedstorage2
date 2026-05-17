@@ -482,7 +482,7 @@ final class CyclicTaskImpl extends TaskImpl {
                     ingredientIndex,
                     ingredientEntry.getValue()
                 );
-                immutableIngredients.put(ingredientIndex, Map.copyOf(orderedByInputPreference));
+                immutableIngredients.put(ingredientIndex, new LinkedHashMap<>(orderedByInputPreference));
                 orderedByInputPreference.forEach((resource, amount) -> totalInputs.merge(resource, amount, Long::sum));
             }
 
@@ -496,7 +496,11 @@ final class CyclicTaskImpl extends TaskImpl {
             pattern.layout().byproducts().forEach(byproduct ->
                 totalProduced.merge(byproduct.resource(), byproduct.amount() * totalIterations, Long::sum));
 
-            patterns.put(pattern, new TaskPlan.PatternPlan(mutable.root, totalIterations, Map.copyOf(immutableIngredients)));
+            patterns.put(pattern, new TaskPlan.PatternPlan(
+                mutable.root,
+                totalIterations,
+                new LinkedHashMap<>(immutableIngredients)
+            ));
         }
 
         final List<ResourceAmount> mergedInitialRequirements = new ArrayList<>();
