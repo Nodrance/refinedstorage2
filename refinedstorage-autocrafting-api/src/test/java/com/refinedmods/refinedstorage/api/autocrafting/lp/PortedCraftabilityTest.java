@@ -3,7 +3,7 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingOrchestrator;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
@@ -36,7 +36,7 @@ class PortedCraftabilityTest {
                 .build()
         );
 
-        final long maxAmount = CraftingInitializer.findMaxCraftableAmount(
+        final long maxAmount = CraftingOrchestrator.findMaxCraftableAmount(
             storage,
             patterns,
             CRAFTING_TABLE,
@@ -64,7 +64,7 @@ class PortedCraftabilityTest {
                 .build()
         );
 
-        final long maxAmount = CraftingInitializer.findMaxCraftableAmount(
+        final long maxAmount = CraftingOrchestrator.findMaxCraftableAmount(
             storage,
             patterns,
             CRAFTING_TABLE,
@@ -91,7 +91,7 @@ class PortedCraftabilityTest {
                 .build()
         );
 
-        final long maxAmount = CraftingInitializer.findMaxCraftableAmount(
+        final long maxAmount = CraftingOrchestrator.findMaxCraftableAmount(
             storage,
             patterns,
             CRAFTING_TABLE,
@@ -118,7 +118,7 @@ class PortedCraftabilityTest {
                 .build()
         );
 
-        final long maxAmount = CraftingInitializer.findMaxCraftableAmount(
+        final long maxAmount = CraftingOrchestrator.findMaxCraftableAmount(
             storage,
             patterns,
             CRAFTING_TABLE,

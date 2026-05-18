@@ -1433,7 +1433,7 @@ class PortedTaskImplTest {
                                 final PatternRepository patterns,
                                 final ResourceKey resource,
                                 final long amount) {
-        final DesanitizedRecipeApplicationPath path = CraftingInitializer.solveToStepPlan(
+        final DesanitizedRecipeApplicationPath path = CraftingOrchestrator.solveToStepPlan(
             storage,
             patterns,
             resource,

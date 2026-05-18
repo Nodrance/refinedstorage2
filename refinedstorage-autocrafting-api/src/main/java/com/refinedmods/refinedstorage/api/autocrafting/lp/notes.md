@@ -1,6 +1,6 @@
 A map of this part of code, for me to organize my thoughts and for anyone coming after me
 
-## CraftingInitializer
+## CraftingOrchestrator
 Orchestrates the whole thing. When you request a preview, it sanitizes the inputs with the Sanitizer, then calls the solve function, then the "turn into a preview" function
 
 ## RecipeSanitizer

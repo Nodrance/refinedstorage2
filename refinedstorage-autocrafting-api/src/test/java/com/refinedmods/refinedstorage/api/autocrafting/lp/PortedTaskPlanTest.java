@@ -192,7 +192,7 @@ class PortedTaskPlanTest {
         final long amount,
         final CancellationToken cancellationToken
     ) {
-        return CraftingInitializer.solveToStepPlan(storage, patterns, resource, amount, cancellationToken)
+        return CraftingOrchestrator.solveToStepPlan(storage, patterns, resource, amount, cancellationToken)
             .filter(path -> path.applicationSet().missingResources().isEmpty());
     }
 

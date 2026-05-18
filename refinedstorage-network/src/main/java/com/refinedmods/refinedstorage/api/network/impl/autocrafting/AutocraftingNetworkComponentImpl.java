@@ -6,7 +6,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.PatternRepositoryImpl;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CraftingCalculatorImpl;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingOrchestrator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.DesanitizedRecipeApplicationPath;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.TaskDispatcher;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
@@ -155,7 +155,8 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
     }
 
     boolean shouldUseLinearAutocraftingSystem() {
-        return AutocraftingModeContext.isUseLinearAutocraftingSystem();
+        return true;
+        // return AutocraftingModeContext.isUseLinearAutocraftingSystem();
     }
 
     private CompletableFuture<Optional<Preview>> getTraditionalPreview(final ResourceKey resource,
@@ -294,7 +295,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
                     ));
                 }
                 final RootStorage rootStorage = state.getRootStorageProvider().get();
-                final CraftingInitializer.SolveAndPreviewResult result = CraftingInitializer.solveAndCalculatePreview(
+                final CraftingOrchestrator.SolveAndPreviewResult result = CraftingOrchestrator.solveAndCalculatePreview(
                     rootStorage,
                     state.getPatternRepository(),
                     resource,
@@ -322,8 +323,8 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
                     return Optional.of(new TreePreview(PreviewType.CANCELLED, null, Collections.emptyList()));
                 }
                 final RootStorage rootStorage = state.getRootStorageProvider().get();
-                final CraftingInitializer.SolveAndTreePreviewResult result =
-                    CraftingInitializer.solveAndCalculateTreePreview(
+                final CraftingOrchestrator.SolveAndTreePreviewResult result =
+                    CraftingOrchestrator.solveAndCalculateTreePreview(
                         rootStorage,
                         state.getPatternRepository(),
                         resource,
@@ -346,7 +347,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
         CoreValidations.validateNotNull(resource, "Resource cannot be null");
         final RootStorage rootStorage = state.getRootStorageProvider().get();
         return CompletableFuture.supplyAsync(
-            () -> CraftingInitializer.findMaxCraftableAmount(
+            () -> CraftingOrchestrator.findMaxCraftableAmount(
                 rootStorage,
                 state.getPatternRepository(),
                 resource,
@@ -449,7 +450,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
             return EnsureResult.MISSING_RESOURCES;
         }
 
-        final long correctedAmount = CraftingInitializer.findMaxCraftableAmount(
+        final long correctedAmount = CraftingOrchestrator.findMaxCraftableAmount(
             rootStorage,
             state.getPatternRepository(),
             resource,
@@ -497,7 +498,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
         final CancellationToken cancellationToken
     ) {
         try {
-            return CraftingInitializer.solveToStepPlan(
+            return CraftingOrchestrator.solveToStepPlan(
                 rootStorage,
                 patternRepository,
                 resource,

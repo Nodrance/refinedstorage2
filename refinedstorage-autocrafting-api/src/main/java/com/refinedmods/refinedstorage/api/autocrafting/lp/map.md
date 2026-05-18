@@ -1,4 +1,4 @@
-## CraftingInitializer
+## CraftingOrchestrator
 ### initialize
 public static Initialization initialize(
     final RootStorage rootStorage,

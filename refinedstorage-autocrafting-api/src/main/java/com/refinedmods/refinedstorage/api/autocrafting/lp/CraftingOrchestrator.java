@@ -34,10 +34,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 // Orchestrates crafting tasks. Contains the main entry points for everything.
-public final class CraftingInitializer {
-    private static final Logger LOGGER = LoggerFactory.getLogger(CraftingInitializer.class);
+public final class CraftingOrchestrator {
+    private static final Logger LOGGER = LoggerFactory.getLogger(CraftingOrchestrator.class);
 
-    private CraftingInitializer() {
+    private CraftingOrchestrator() {
     }
 
     public static Initialization initialize(

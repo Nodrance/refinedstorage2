@@ -1,8 +1,8 @@
-# Test Porting Summary
+# Test Porting
 This file contains a summary of every existing autocrafting test file and how it does or doesn't apply to the LP versions of each class.
 
 ## Not applicable
-These are things LP does not touch or attempt to replace, such as the PreviewBuilder
+Stuff LP doesn't touch or attempt to replace, such as the PreviewBuilder
 
 - `PreviewBuilderTest.java`
 - `PatternTest.java`
@@ -11,7 +11,7 @@ These are things LP does not touch or attempt to replace, such as the PreviewBui
 - `AmountTest.java`
 
 ## Ported
-These tests have been changed to use the LP equivalents of the existing implementations, but are otherwise unchanged in setup and assertions, other than noted below.
+These ones have been changed to use the LP equivalents of the existing implementations, but are otherwise unchanged in setup and assertions, other than noted below.
 - `PortedPreviewTest.java`
 - `PortedTreePreviewTest.java`
 - `PortedTaskPlanTest.java`

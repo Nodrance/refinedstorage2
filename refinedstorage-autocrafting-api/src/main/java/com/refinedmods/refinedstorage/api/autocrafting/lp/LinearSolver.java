@@ -60,6 +60,9 @@ public final class LinearSolver {
     }
 
     public Result lexicographicMinimum() {
+        // Finds the solution for the target that minimizes each recipe
+        // Starts with lowest priority recipes, "shifting" their uses to higher priority ones
+        // Until we end up minimizing all recipes
         throwIfCancelled();
         final Result feasibilityResult = solveWithObjective(null, null, false, Map.of());
         if (feasibilityResult == null) {
@@ -95,6 +98,8 @@ public final class LinearSolver {
     }
 
     public boolean hasFeasibleSolution() {
+        // Whether the target is achievable at all, without any optimization objective. 
+        // This is a quick check used in some places to avoid doing more expensive solves when the target is outright impossible.
         throwIfCancelled();
         final boolean feasible = solveWithObjective(null, null, false, Map.of()) != null;
         LOGGER.debug("[LP] hasFeasibleSolution: target={} feasible={}", target, feasible);
@@ -102,6 +107,8 @@ public final class LinearSolver {
     }
 
     public Result maximize(final MultiResourceKey objectiveResource) {
+        // Finds the solution that maximizes the given objective resource
+        // Used in calculating max craftable amounts
         throwIfCancelled();
         final Result result = solveWithObjective(
             Objects.requireNonNull(objectiveResource, "objectiveResource cannot be null"),
@@ -123,6 +130,7 @@ public final class LinearSolver {
         final Set<MultiResourceKey> deficitResources,
         final ResourcePool minimumFinalInventory
     ) {
+        // If you have a solution with 
         throwIfCancelled();
         final Set<MultiResourceKey> sanitizedDeficitResources = Set.copyOf(
             Objects.requireNonNull(deficitResources, "deficitResources cannot be null")
@@ -133,8 +141,8 @@ public final class LinearSolver {
         ).copy();
         final long deficitBefore = sumDeficitAmounts(sanitizedMinimumFinalInventory, sanitizedDeficitResources);
         final Result result = solveForDeficitObjective(sanitizedDeficitResources, sanitizedMinimumFinalInventory);
-        final long deficitAfter = result == null
-            ? deficitBefore
+        final long deficitAfter = 
+        result == null ? deficitBefore
             : sumDeficitAmounts(result.finalInventoryValues(), sanitizedDeficitResources);
         final boolean deficitDecreased = result != null && deficitAfter < deficitBefore;
         LOGGER.debug(

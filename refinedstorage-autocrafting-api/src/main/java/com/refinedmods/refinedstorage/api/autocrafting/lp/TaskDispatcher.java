@@ -186,21 +186,11 @@ public final class TaskDispatcher {
         final Pattern pattern = requirePattern(step.recipe(), patternsById);
         final long iterations = step.timesApplied();
 
-        final Map<ResourceKey, Long> availablePerIteration = new LinkedHashMap<>(step.recipe().input());
-
         final Map<Integer, Map<ResourceKey, Long>> ingredients = new LinkedHashMap<>();
         final List<ResourceAmount> initialRequirements = new ArrayList<>();
-        for (int ingredientIndex = 0; ingredientIndex < pattern.layout().ingredients().size(); ingredientIndex++) {
-            final var ingredient = pattern.layout().ingredients().get(ingredientIndex);
-            ResourceKey resource = ingredient.inputs().getFirst();
-            for (final ResourceKey option : ingredient.inputs()) {
-                final long available = availablePerIteration.getOrDefault(option, 0L);
-                if (available >= ingredient.amount()) {
-                    resource = option;
-                    availablePerIteration.put(option, available - ingredient.amount());
-                    break;
-                }
-            }
+        for (int ingredientIndex = 0; ingredientIndex < step.recipe().layout().ingredients().size(); ingredientIndex++) {
+            final var ingredient = step.recipe().layout().ingredients().get(ingredientIndex);
+            final ResourceKey resource = ingredient.inputs().getFirst();
             final long totalAmount = ingredient.amount() * iterations;
             final Map<ResourceKey, Long> orderedIngredientResources = new LinkedHashMap<>();
             orderedIngredientResources.put(resource, totalAmount);
@@ -213,12 +203,12 @@ public final class TaskDispatcher {
             new TaskPlan.PatternPlan(root, iterations, new LinkedHashMap<>(ingredients))
         );
 
-        final ResourceKey outputResource = pattern.layout().outputs().isEmpty()
+        final ResourceKey outputResource = step.recipe().layout().outputs().isEmpty()
             ? requestedResource
-            : pattern.layout().outputs().getFirst().resource();
-        final long outputAmount = pattern.layout().outputs().isEmpty()
+            : step.recipe().layout().outputs().getFirst().resource();
+        final long outputAmount = step.recipe().layout().outputs().isEmpty()
             ? iterations
-            : pattern.layout().outputs().getFirst().amount() * iterations;
+            : step.recipe().layout().outputs().getFirst().amount() * iterations;
         final long taskAmount = requestedAmount > 0 ? requestedAmount : outputAmount;
 
         return new TaskPlan(

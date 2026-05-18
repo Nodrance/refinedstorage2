@@ -1,8 +1,12 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
+import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
+import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
+import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -533,8 +537,7 @@ public final class RecipeDesanitizer {
                         new DesanitizedRecipe(
                             recipe.recipeId(),
                             recipe.sourcePatternId(),
-                            currentInput,
-                            sanitizedOutput,
+                            buildDesanitizedLayout(currentInput, sanitizedOutput),
                             recipe.priority(),
                             recipe.insertionOrder()
                         ),
@@ -550,8 +553,7 @@ public final class RecipeDesanitizer {
                     new DesanitizedRecipe(
                         recipe.recipeId(),
                         recipe.sourcePatternId(),
-                        currentInput,
-                        sanitizedOutput,
+                        buildDesanitizedLayout(currentInput, sanitizedOutput),
                         recipe.priority(),
                         recipe.insertionOrder()
                     ),
@@ -592,6 +594,23 @@ public final class RecipeDesanitizer {
         return decoded;
     }
 
+    // Builds a PatternLayout from desanitized input/output maps.
+    // Each input entry becomes a single-resource Ingredient; each output entry becomes a ResourceAmount.
+    private static PatternLayout buildDesanitizedLayout(
+        final Map<ResourceKey, Long> input,
+        final Map<ResourceKey, Long> output
+    ) {
+        final List<Ingredient> ingredients = new ArrayList<>(input.size());
+        for (final Map.Entry<ResourceKey, Long> entry : input.entrySet()) {
+            ingredients.add(new Ingredient(entry.getValue(), List.of(entry.getKey())));
+        }
+        final List<ResourceAmount> outputs = new ArrayList<>(output.size());
+        for (final Map.Entry<ResourceKey, Long> entry : output.entrySet()) {
+            outputs.add(new ResourceAmount(entry.getKey(), entry.getValue()));
+        }
+        return PatternLayout.internal(ingredients, outputs, List.of());
+    }
+
     // Converts a RecipeApplicationSet (which uses MRKs and ResourcePools) to a
     // DesanitizedRecipeApplicationSet (which uses only ResourceKey and Map<ResourceKey, Long>).
     public static DesanitizedRecipeApplicationSet convertToDesanitized(
@@ -610,13 +629,14 @@ public final class RecipeDesanitizer {
         
         for (final SanitizedRecipe recipe : applicationSet.recipes()) {
             throwIfCancelled(cancellationToken);
-            final Map<ResourceKey, Long> input = convertToDesanitizedOutputs(recipe.input());
-            final Map<ResourceKey, Long> output = convertToDesanitizedOutputs(recipe.output());
+            final PatternLayout layout = buildDesanitizedLayout(
+                convertToDesanitizedOutputs(recipe.input()),
+                convertToDesanitizedOutputs(recipe.output())
+            );
             final DesanitizedRecipe desanitized = new DesanitizedRecipe(
                 recipe.recipeId(),
                 recipe.sourcePatternId(),
-                input,
-                output,
+                layout,
                 recipe.priority(),
                 recipe.insertionOrder()
             );

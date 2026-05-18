@@ -4,7 +4,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.CancelledCancellationToke
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingInitializer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingOrchestrator;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewBuilder;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
@@ -566,7 +566,7 @@ class PortedPreviewTest {
         final long requestedAmount,
         final CancellationToken cancellationToken
     ) {
-        return CraftingInitializer.solveAndCalculatePreview(
+        return CraftingOrchestrator.solveAndCalculatePreview(
             storage,
             patterns,
             resource,
