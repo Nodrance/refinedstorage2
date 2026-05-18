@@ -130,7 +130,8 @@ public final class LinearSolver {
         final Set<MultiResourceKey> deficitResources,
         final ResourcePool minimumFinalInventory
     ) {
-        // If you have a solution with 
+        // Minimizes the total number of items you'd need to add in order to make the recipe craftable
+        // Also ensures that no individual resource ends up worse than it started before
         throwIfCancelled();
         final Set<MultiResourceKey> sanitizedDeficitResources = Set.copyOf(
             Objects.requireNonNull(deficitResources, "deficitResources cannot be null")
@@ -163,6 +164,7 @@ public final class LinearSolver {
         final boolean maximize,
         final Map<UUID, Long> lockedRecipeValues
     ) {
+        // Solves a linear programming problem, minimizing or maximizing the given objective
         throwIfCancelled();
 
         final FutureTask<Result> solveTask = new FutureTask<>(
