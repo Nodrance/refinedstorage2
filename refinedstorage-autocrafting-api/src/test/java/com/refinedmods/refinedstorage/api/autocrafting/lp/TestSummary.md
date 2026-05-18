@@ -1,33 +1,23 @@
+# Test Summary
+This file contains a summary of every existing autocrafting test file and how it does or doesn't apply to the LP versions of each test
+
 ## Not applicable
-Tests for things LP does not touch or attempt to replace, such as the PreviewBuilder
+These are things LP does not touch or attempt to replace, such as the PreviewBuilder
 
 - `PreviewBuilderTest.java`
-- `TaskPlanTest.java`
-- `PreviewTest.java`
-- `TreePreviewTest.java`
-- `CraftabilityTest.java`
 - `PatternTest.java`
 - `PatternRepositoryImplTest.java`
 - `IngredientTest.java`
 - `AmountTest.java`
 
-## No equivalent
-Tests for things LP replaces but has no 1:1 testable equivalent for
+## Changes
+- All preview tests have been changed to not care about preview ordering. If you can explain to me how the ordering works I'll gladly implement it. Mine follows the rule that every items is guaranteed to be before all its ingredients (not counting loops) and other than that it makes no guarantees.
+- `shouldDetectPatternCycles` in both preview tests now simply solves the cycle properly instead of giving up.
 
-- `TaskImplTest.java`
-
-## Changed
-Tests that had to have their expectations changed to be compatible with LP, such as which ingredient is considered missing in some Preview tests
-Note that all preview-style tests use a dedicated comparison method which doesn't care about the order items appear.
-
-- `PortedPreviewTest.shouldExhaustAllPossibleIngredientsWhenRunningOutInSingleRootPatternAndMultipleIngredients`: LP expects `OAK_PLANKS` to be missing instead of `SPRUCE_PLANKS`.
-- `PortedPreviewTest.shouldNotCalculateForSingleRootPatternSingleChildPatternWSingleIngredientAndAlmostAllResourcesAreAvailable`: LP expects 2 `OAK_LOG` to be available and only 1 `SPRUCE_LOG` to be missing, instead of missing 3 spruce logs.
-- `PortedPreviewTest.shouldDetectPatternCycles` differs from `PreviewTest.shouldDetectPatternCycles`: LP simply solves the crafting problem instead of throwing an exception.
-- `PortedTreePreviewTest.java` differs in the same tests for the same reasons
-
-## Unchanged
-Tests that are identical to their non-LP counterparts, except for the aforementioned change to the preview assertions.
-- `PortedPreviewTest.java` except where noted above
-- `PortedTreePreviewTest.java` except where noted above
-- `PortedStepPlanTest.java`
+## Ported
+These tests have been changed to use the LP equivalents of the existing implementations, but are otherwise unchanged in setup and assertions.
+- `PortedPreviewTest.java`
+- `PortedTreePreviewTest.java`
+- `PortedTaskPlanTest.java`
 - `PortedCraftabilityTest.java`
+- `PortedTaskImplTest.java`

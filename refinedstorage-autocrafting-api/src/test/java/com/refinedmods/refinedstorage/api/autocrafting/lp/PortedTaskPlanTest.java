@@ -26,7 +26,7 @@ import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.S
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class PortedStepPlanTest {
+class PortedTaskPlanTest {
     @Test
     void shouldNotPlanTaskWhenThereAreMissingResources() {
         final RootStorage storage = storage();
