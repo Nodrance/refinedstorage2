@@ -7,10 +7,12 @@ import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,6 +65,8 @@ public final class RecipeDesanitizer {
             applicationSet.relevantResourceKeys(),
             cancellationToken
         );
+        final Set<ResourceKey> relevantResourceKeys = new LinkedHashSet<>(decodedRelevantResourceKeys);
+        relevantResourceKeys.addAll(decodedMissingResources.keySet());
         final Map<ResourceKey, Long> decodedPeakUsage = decodeSanitizedResourcePoolToDesanitized(
             path.peakResourceUsage(),
             sanitizedStartingResources,
@@ -74,7 +78,7 @@ public final class RecipeDesanitizer {
             decodedUsedResources,
             decodedFinalInventoryValues,
             decodedMissingResources,
-            decodedRelevantResourceKeys,
+            List.copyOf(relevantResourceKeys),
             decodedPeakUsage,
             path.hasCycles()
         );
@@ -299,13 +303,11 @@ public final class RecipeDesanitizer {
         final List<MultiResourceKey> relevantResourceKeys,
         final CancellationToken cancellationToken
     ) {
-        final java.util.List<ResourceKey> desanitizedRelevantKeys = new java.util.ArrayList<>();
+        final Set<ResourceKey> desanitizedRelevantKeys = new LinkedHashSet<>();
         for (final MultiResourceKey mrk : relevantResourceKeys) {
             throwIfCancelled(cancellationToken);
-            if (!mrk.members().isEmpty()) {
-                desanitizedRelevantKeys.add(mrk.members().getFirst());
-            }
+            desanitizedRelevantKeys.addAll(mrk.members());
         }
-        return List.copyOf(desanitizedRelevantKeys);
+        return List.copyOf(new ArrayList<>(desanitizedRelevantKeys));
     }
 }
