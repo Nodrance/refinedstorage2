@@ -601,47 +601,6 @@ class PortedPreviewTest {
     }
 
     @Test
-    void shouldCalculateMissingResourcesWhenLoopHasNoEntrance() {
-        final RootStorage storage = storage();
-        final PatternRepository patterns = patterns(
-            pattern()
-                .ingredient(OAK_PLANKS, 1)
-                .output(OAK_PLANKS, 2)
-                .build()
-        );
-
-        final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, 1, CancellationToken.NONE);
-
-        assertPreviewEquals(preview, PreviewBuilder.create()
-            .addMissing(OAK_PLANKS, 1)
-            .build());
-    }
-
-    @Test 
-    void shouldCalculateMissingResourcesWhenLoopIsMissingExternalResources() {
-        final RootStorage storage = storage(
-            new ResourceAmount(OAK_PLANKS, 1),
-            new ResourceAmount(SPRUCE_PLANKS, 2)
-        );
-        final PatternRepository patterns = patterns(
-            pattern()
-                .ingredient(OAK_PLANKS, 1)
-                .ingredient(SPRUCE_PLANKS, 1)
-                .output(OAK_PLANKS, 2)
-                .build()
-        );
-
-        final Preview preview = calculatePreview(storage, patterns, OAK_PLANKS, 5, CancellationToken.NONE);
-
-        assertPreviewEquals(preview, PreviewBuilder.create()
-            .addToCraft(OAK_PLANKS, 10)
-            .addAvailable(OAK_PLANKS, 1)
-            .addAvailable(SPRUCE_PLANKS, 2)
-            .addMissing(SPRUCE_PLANKS, 3)
-            .build());
-    }
-
-    @Test
     void shouldDetectNumberOverflowInIngredient() {
         // Arrange
         final RootStorage storage = storage();

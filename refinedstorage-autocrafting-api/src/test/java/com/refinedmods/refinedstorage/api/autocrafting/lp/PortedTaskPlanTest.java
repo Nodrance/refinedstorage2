@@ -6,6 +6,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
+import com.refinedmods.refinedstorage.api.resource.list.ResourceList;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
 import java.util.List;
@@ -141,7 +142,7 @@ class PortedTaskPlanTest {
 
         assertThatThrownBy(() -> plan.steps().add(plan.steps().getFirst()))
             .isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> plan.usedResources().clear())
+        assertThatThrownBy(() -> plan.usedResources().copyState().clear())
             .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> plan.relevantResourceKeys().clear())
             .isInstanceOf(UnsupportedOperationException.class);
@@ -194,6 +195,10 @@ class PortedTaskPlanTest {
     ) {
         return CraftingOrchestrator.solveToStepPlan(storage, patterns, resource, amount, cancellationToken)
             .filter(path -> path.missingResources().isEmpty());
+    }
+
+    private static long getAmount(final ResourceList resources, final ResourceKey resource) {
+        return resources.get(resource);
     }
 
     private static long getAmount(final java.util.Map<ResourceKey, Long> resources, final ResourceKey resource) {
