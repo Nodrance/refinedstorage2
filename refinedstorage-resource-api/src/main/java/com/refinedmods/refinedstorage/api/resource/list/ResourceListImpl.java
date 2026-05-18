@@ -12,12 +12,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-import org.apiguardian.api.API;
-
 /**
  * An immutable implementation of a {@link ResourceList} that stores positive resource amounts in memory.
  */
-@API(status = API.Status.STABLE, since = "2.0.0-milestone.1.2")
 public final class ResourceListImpl implements ResourceList {
     private static final ResourceListImpl EMPTY = new ResourceListImpl(Map.of());
 
