@@ -504,7 +504,7 @@ public class AutocraftingNetworkComponentImpl implements AutocraftingNetworkComp
                 resource,
                 amount,
                 cancellationToken
-            ).filter(path -> path.applicationSet().missingResources().isEmpty());
+            ).filter(path -> path.missingResources().isEmpty());
         } catch (final CancellationException e) {
             return Optional.empty();
         }

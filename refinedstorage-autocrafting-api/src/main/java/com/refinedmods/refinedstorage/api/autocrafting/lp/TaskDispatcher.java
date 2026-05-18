@@ -125,61 +125,6 @@ public final class TaskDispatcher {
 
     static TaskPlan translateLpStepToTaskPlan(final ResourceKey requestedResource,
                                              final long requestedAmount,
-                                             final RecipeApplicationStep step,
-                                             final Map<UUID, Pattern> patternsById,
-                                             final boolean root) {
-        final Pattern pattern = requirePattern(step.recipe(), patternsById);
-        final long iterations = step.timesApplied();
-
-        final Map<ResourceKey, Long> availablePerIteration = new LinkedHashMap<>();
-        for (final var entry : step.recipe().input()) {
-            availablePerIteration.put(RecipeDesanitizer.toSanitizedResourceKey(entry.getKey()), entry.getValue());
-        }
-
-        final Map<Integer, Map<ResourceKey, Long>> ingredients = new LinkedHashMap<>();
-        final List<ResourceAmount> initialRequirements = new ArrayList<>();
-        for (int ingredientIndex = 0; ingredientIndex < pattern.layout().ingredients().size(); ingredientIndex++) {
-            final var ingredient = pattern.layout().ingredients().get(ingredientIndex);
-            ResourceKey resource = ingredient.inputs().getFirst();
-            for (final ResourceKey option : ingredient.inputs()) {
-                final long available = availablePerIteration.getOrDefault(option, 0L);
-                if (available >= ingredient.amount()) {
-                    resource = option;
-                    availablePerIteration.put(option, available - ingredient.amount());
-                    break;
-                }
-            }
-            final long totalAmount = ingredient.amount() * iterations;
-            final Map<ResourceKey, Long> orderedIngredientResources = new LinkedHashMap<>();
-            orderedIngredientResources.put(resource, totalAmount);
-            ingredients.put(ingredientIndex, orderedIngredientResources);
-            initialRequirements.add(new ResourceAmount(resource, totalAmount));
-        }
-
-        final Map<Pattern, TaskPlan.PatternPlan> patterns = Map.of(
-            pattern,
-            new TaskPlan.PatternPlan(root, iterations, new LinkedHashMap<>(ingredients))
-        );
-
-        final ResourceKey outputResource = pattern.layout().outputs().isEmpty()
-            ? requestedResource
-            : pattern.layout().outputs().getFirst().resource();
-        final long outputAmount = pattern.layout().outputs().isEmpty()
-            ? iterations
-            : pattern.layout().outputs().getFirst().amount() * iterations;
-        final long taskAmount = requestedAmount > 0 ? requestedAmount : outputAmount;
-
-        return new TaskPlan(
-            outputResource,
-            taskAmount,
-            pattern,
-            patterns,
-            List.copyOf(initialRequirements)
-        );
-    }
-
-    static TaskPlan translateLpStepToTaskPlan(final ResourceKey requestedResource,
-                                             final long requestedAmount,
                                              final DesanitizedRecipeApplicationStep step,
                                              final Map<UUID, Pattern> patternsById,
                                              final boolean root) {
@@ -329,14 +274,6 @@ public final class TaskDispatcher {
             patternsById.put(pattern.id(), pattern);
         }
         return patternsById;
-    }
-
-    static Pattern requirePattern(final SanitizedRecipe recipe, final Map<UUID, Pattern> patternsById) {
-        final Pattern pattern = patternsById.get(recipe.sourcePatternId());
-        if (pattern != null) {
-            return pattern;
-        }
-        throw new IllegalStateException("Missing pattern for recipe " + recipe.recipeId());
     }
 
     static Pattern requirePattern(final DesanitizedRecipe recipe, final Map<UUID, Pattern> patternsById) {

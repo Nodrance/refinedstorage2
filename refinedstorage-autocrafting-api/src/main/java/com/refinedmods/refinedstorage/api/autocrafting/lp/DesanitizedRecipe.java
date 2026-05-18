@@ -11,9 +11,7 @@ import java.util.UUID;
 public record DesanitizedRecipe(
     UUID recipeId,
     UUID sourcePatternId,
-    PatternLayout layout,
-    long priority,
-    long insertionOrder
+    PatternLayout layout
 ) {
     public DesanitizedRecipe {
         Objects.requireNonNull(recipeId, "recipeId cannot be null");

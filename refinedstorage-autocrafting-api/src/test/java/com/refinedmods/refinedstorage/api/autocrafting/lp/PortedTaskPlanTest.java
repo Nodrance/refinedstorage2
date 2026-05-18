@@ -60,9 +60,9 @@ class PortedTaskPlanTest {
         final DesanitizedRecipeApplicationPath plan = optionalPlan.orElseThrow();
         assertThat(plan.steps()).hasSize(1);
         assertThat(totalTimesAppliedForPattern(plan, OAK_PLANKS_PATTERN)).isEqualTo(1L);
-        assertThat(getAmount(plan.applicationSet().usedResources(), OAK_LOG)).isEqualTo(1L);
-        assertThat(getAmount(plan.applicationSet().finalInventoryValues(), OAK_PLANKS)).isEqualTo(4L);
-        assertThat(plan.applicationSet().missingResources().isEmpty()).isTrue();
+        assertThat(getAmount(plan.usedResources(), OAK_LOG)).isEqualTo(1L);
+        assertThat(getAmount(plan.finalInventoryValues(), OAK_PLANKS)).isEqualTo(4L);
+        assertThat(plan.missingResources().isEmpty()).isTrue();
     }
 
     @Test
@@ -110,13 +110,13 @@ class PortedTaskPlanTest {
 
         assertThat(optionalPlan).isPresent();
         final DesanitizedRecipeApplicationPath plan = optionalPlan.orElseThrow();
-        assertThat(getAmount(plan.applicationSet().usedResources(), OAK_LOG)).isEqualTo(1L);
-        assertThat(getAmount(plan.applicationSet().usedResources(), SPRUCE_LOG)).isEqualTo(1L);
-        assertThat(getAmount(plan.applicationSet().usedResources(), OAK_PLANKS)).isGreaterThanOrEqualTo(4L);
+        assertThat(getAmount(plan.usedResources(), OAK_LOG)).isEqualTo(1L);
+        assertThat(getAmount(plan.usedResources(), SPRUCE_LOG)).isEqualTo(1L);
+        assertThat(getAmount(plan.usedResources(), OAK_PLANKS)).isGreaterThanOrEqualTo(4L);
         assertThat(totalTimesAppliedForPattern(plan, CRAFTING_TABLE_PATTERN)).isEqualTo(3L);
         assertThat(totalTimesAppliedForPattern(plan, OAK_PLANKS_PATTERN)).isEqualTo(1L);
         assertThat(totalTimesAppliedForPattern(plan, SPRUCE_PLANKS_PATTERN)).isEqualTo(1L);
-        assertThat(plan.applicationSet().missingResources().isEmpty()).isTrue();
+        assertThat(plan.missingResources().isEmpty()).isTrue();
     }
 
     @Test
@@ -141,9 +141,9 @@ class PortedTaskPlanTest {
 
         assertThatThrownBy(() -> plan.steps().add(plan.steps().getFirst()))
             .isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> plan.applicationSet().recipeValues().clear())
+        assertThatThrownBy(() -> plan.usedResources().clear())
             .isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> plan.applicationSet().relevantResourceKeys().clear())
+        assertThatThrownBy(() -> plan.relevantResourceKeys().clear())
             .isInstanceOf(UnsupportedOperationException.class);
     }
 
@@ -193,7 +193,7 @@ class PortedTaskPlanTest {
         final CancellationToken cancellationToken
     ) {
         return CraftingOrchestrator.solveToStepPlan(storage, patterns, resource, amount, cancellationToken)
-            .filter(path -> path.applicationSet().missingResources().isEmpty());
+            .filter(path -> path.missingResources().isEmpty());
     }
 
     private static long getAmount(final java.util.Map<ResourceKey, Long> resources, final ResourceKey resource) {

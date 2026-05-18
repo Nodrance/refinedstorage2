@@ -31,6 +31,11 @@ public final class ExecutionPlanner {
         final ResourcePool startingResources,
         final CancellationToken cancellationToken
     ) {
+        // Turns a recipeApplicationSet into a recipeExecutrionPlan
+        // This involves:
+        // - Finding a valid order of recipe applications that respects dependencies
+        // - 
+        // - 
         Objects.requireNonNull(applicationSet, "applicationSet cannot be null");
         Objects.requireNonNull(startingResources, "startingResources cannot be null");
         validateCancellationToken(cancellationToken);
@@ -104,7 +109,8 @@ public final class ExecutionPlanner {
             }
         }
 
-        final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult = RecipeAnalyzer.detectRecipeCycles(recipes);
+        final SanitizedRecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
+            SanitizedRecipeAnalyzer.detectRecipeCycles(recipes);
         final Map<UUID, Boolean> inLoopById = cycleDetectionResult.inLoopByRecipeId();
 
         final ResourcePool inventory = startingResources.copy();
@@ -382,7 +388,7 @@ public final class ExecutionPlanner {
         // for (final RecipeApplicationStep step : steps) {
         //     recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
         // }
-        // return !RecipeAnalyzer.detectRecipeCycles(new ArrayList<>(recipesById.values())).cycles().isEmpty();
+        // return !SanitizedRecipeAnalyzer.detectRecipeCycles(new ArrayList<>(recipesById.values())).cycles().isEmpty();
     }
 
     private static List<RecipeApplicationStep> reorderCyclicSteps(

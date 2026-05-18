@@ -96,7 +96,7 @@ public final class CraftingOrchestrator {
         LOGGER.debug("[LPT] Collecting Relevant Resource Keys");
         final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
         final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
-            RecipeAnalyzer.collectRelevantResourceKeys(sanitizedRecipes)
+            SanitizedRecipeAnalyzer.collectRelevantResourceKeys(sanitizedRecipes)
         );
         // relevantResources.add(targetResource);
 
@@ -597,14 +597,11 @@ public final class CraftingOrchestrator {
         Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
 
         if (recipeApplicationPath.isPresent()) {
-            final RecipeApplicationPath sanitizedPath = RecipeDesanitizer.toRecipeApplicationPath(
-                recipeApplicationPath.get()
-            );
             return buildTreePreviewFromPath(
                 resource,
                 amount,
                 rootStorage,
-                sanitizedPath,
+                recipeApplicationPath.get(),
                 initialization.relevantPatterns()
             );
         }
@@ -621,7 +618,7 @@ public final class CraftingOrchestrator {
         final ResourceKey resource,
         final long amount,
         final RootStorage rootStorage,
-        final RecipeApplicationPath path,
+        final DesanitizedRecipeApplicationPath path,
         final Collection<Pattern> relevantPatterns
     ) {
         LOGGER.debug("[LPT] Entering buildTreePreviewFromSteps()");
@@ -629,17 +626,17 @@ public final class CraftingOrchestrator {
         final ArrayDeque<PendingNode> frontier = new ArrayDeque<>();
         frontier.add(new PendingNode(root, amount));
 
-        final List<RecipeApplicationStep> reversedSteps = new ArrayList<>(path.steps());
+        final List<DesanitizedRecipeApplicationStep> reversedSteps = new ArrayList<>(path.steps());
         Collections.reverse(reversedSteps);
 
-        for (final RecipeApplicationStep step : reversedSteps) {
+        for (final DesanitizedRecipeApplicationStep step : reversedSteps) {
             if (frontier.isEmpty()) {
                 break;
             }
 
             final List<PendingNode> matchedNodes = new ArrayList<>();
             for (final PendingNode pendingNode : frontier) {
-                if (getSanitizedAmount(step.recipe().output(), pendingNode.node.resource) > 0L) {
+                if (getDesanitizedOutputAmount(step.recipe(), pendingNode.node.resource) > 0L) {
                     matchedNodes.add(pendingNode);
                 }
             }
@@ -658,7 +655,7 @@ public final class CraftingOrchestrator {
 
                 final NodeBuilder node = pendingNode.node;
                 final long requiredAmount = pendingNode.requiredAmount;
-                final long outputPerIteration = getSanitizedAmount(step.recipe().output(), node.resource);
+                final long outputPerIteration = getDesanitizedOutputAmount(step.recipe(), node.resource);
                 if (outputPerIteration <= 0) {
                     nextNodes.add(pendingNode);
                     continue;
@@ -675,9 +672,12 @@ public final class CraftingOrchestrator {
                 final long craftedAmount = outputPerIteration * usedIterations;
                 node.toCraft += craftedAmount;
 
-                for (final var input : step.recipe().input()) {
-                    final ResourceKey inputResource = RecipeDesanitizer.toSanitizedResourceKey(input.getKey());
-                    final long childAmount = input.getValue() * usedIterations;
+                for (final Ingredient ingredient : step.recipe().layout().ingredients()) {
+                    if (ingredient.inputs().isEmpty()) {
+                        continue;
+                    }
+                    final ResourceKey inputResource = ingredient.inputs().getFirst();
+                    final long childAmount = ingredient.amount() * usedIterations;
                     if (childAmount <= 0) {
                         continue;
                     }
@@ -700,9 +700,9 @@ public final class CraftingOrchestrator {
         }
 
         final Set<ResourceKey> producibleResources = new HashSet<>();
-        for (final RecipeApplicationStep step : path.steps()) {
-            for (final var output : step.recipe().output()) {
-                producibleResources.add(RecipeDesanitizer.toSanitizedResourceKey(output.getKey()));
+        for (final DesanitizedRecipeApplicationStep step : path.steps()) {
+            for (final ResourceAmount output : step.recipe().layout().outputs()) {
+                producibleResources.add(output.resource());
             }
         }
 
@@ -725,48 +725,7 @@ public final class CraftingOrchestrator {
         root.amount = Math.max(amount, root.toCraft);
 
         final PreviewType type = hasMissing(root) ? PreviewType.MISSING_RESOURCES : PreviewType.SUCCESS;
-        return new TreePreview(type, root.build(), outputsOfPatternWithCycle(path, relevantPatterns));
-    }
-
-    private static List<ResourceAmount> outputsOfPatternWithCycle(
-        final RecipeApplicationPath path,
-        final Collection<Pattern> relevantPatterns
-    ) {
-        LOGGER.debug("[LPT] Entering outputsOfPatternWithCycle()");
-        final Map<UUID, SanitizedRecipe> recipesById = new LinkedHashMap<>();
-        for (final RecipeApplicationStep step : path.steps()) {
-            recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
-        }
-        final RecipeAnalyzer.CycleDetectionResult cycleDetectionResult = RecipeAnalyzer.detectRecipeCycles(
-            new ArrayList<>(recipesById.values())
-        );
-        if (cycleDetectionResult.cycles().isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        final Map<UUID, Pattern> patternsById = new LinkedHashMap<>();
-        for (final Pattern pattern : relevantPatterns) {
-            patternsById.put(pattern.id(), pattern);
-        }
-
-        final Set<UUID> cycleRecipeIds = new LinkedHashSet<>();
-        for (final List<UUID> cycle : cycleDetectionResult.cycles()) {
-            cycleRecipeIds.addAll(cycle);
-        }
-
-        final Set<ResourceAmount> outputs = new HashSet<>();
-        for (final UUID recipeId : cycleRecipeIds) {
-            final SanitizedRecipe recipe = recipesById.get(recipeId);
-            if (recipe == null) {
-                continue;
-            }
-            final Pattern pattern = patternsById.get(recipe.sourcePatternId());
-            if (pattern == null) {
-                continue;
-            }
-            outputs.addAll(pattern.layout().outputs());
-        }
-        return List.copyOf(outputs);
+        return new TreePreview(type, root.build(), Collections.emptyList());
     }
 
     private static TreePreview buildFallbackTreePreview(
@@ -969,9 +928,14 @@ public final class CraftingOrchestrator {
         return (int) value;
     }
 
-
-    private static long getSanitizedAmount(final ResourcePool pool, final ResourceKey resource) {
-        return pool.getAmount(new MultiResourceKey(List.of(resource)));
+    private static long getDesanitizedOutputAmount(final DesanitizedRecipe recipe, final ResourceKey resource) {
+        long total = 0L;
+        for (final ResourceAmount output : recipe.layout().outputs()) {
+            if (output.resource().equals(resource)) {
+                total += output.amount();
+            }
+        }
+        return total;
     }
 
     private static void throwIfCancelled(final CancellationToken cancellationToken) {
