@@ -1,6 +1,8 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
+import com.refinedmods.refinedstorage.api.resource.list.ResourceList;
+import com.refinedmods.refinedstorage.api.resource.list.ResourceListImpl;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,13 +15,33 @@ import java.util.Objects;
 // If the item is craftable, this represents what the crafter will actually do.
 public record DesanitizedRecipeApplicationPath(
     List<DesanitizedRecipeApplicationStep> steps,
-    Map<ResourceKey, Long> usedResources,
+    ResourceList usedResources,
     Map<ResourceKey, Long> finalInventoryValues,
-    Map<ResourceKey, Long> missingResources,
+    ResourceList missingResources,
     List<ResourceKey> relevantResourceKeys,
-    Map<ResourceKey, Long> peakResourceUsage,
+    ResourceList peakResourceUsage,
     boolean hasCycles
 ) {
+    public DesanitizedRecipeApplicationPath(
+        final List<DesanitizedRecipeApplicationStep> steps,
+        final Map<ResourceKey, Long> usedResources,
+        final Map<ResourceKey, Long> finalInventoryValues,
+        final Map<ResourceKey, Long> missingResources,
+        final List<ResourceKey> relevantResourceKeys,
+        final Map<ResourceKey, Long> peakResourceUsage,
+        final boolean hasCycles
+    ) {
+        this(
+            steps,
+            ResourceListImpl.copyOf(usedResources),
+            finalInventoryValues,
+            ResourceListImpl.copyOf(missingResources),
+            relevantResourceKeys,
+            ResourceListImpl.copyOf(peakResourceUsage),
+            hasCycles
+        );
+    }
+
     public DesanitizedRecipeApplicationPath {
         Objects.requireNonNull(steps, "steps cannot be null");
         Objects.requireNonNull(usedResources, "usedResources cannot be null");
@@ -28,10 +50,10 @@ public record DesanitizedRecipeApplicationPath(
         Objects.requireNonNull(relevantResourceKeys, "relevantResourceKeys cannot be null");
         Objects.requireNonNull(peakResourceUsage, "peakResourceUsage cannot be null");
         steps = List.copyOf(steps);
-        usedResources = Map.copyOf(new LinkedHashMap<>(usedResources));
+        usedResources = ResourceListImpl.copyOf(usedResources);
         finalInventoryValues = Map.copyOf(new LinkedHashMap<>(finalInventoryValues));
-        missingResources = Map.copyOf(new LinkedHashMap<>(missingResources));
+        missingResources = ResourceListImpl.copyOf(missingResources);
         relevantResourceKeys = List.copyOf(relevantResourceKeys);
-        peakResourceUsage = Map.copyOf(new LinkedHashMap<>(peakResourceUsage));
+        peakResourceUsage = ResourceListImpl.copyOf(peakResourceUsage);
     }
 }

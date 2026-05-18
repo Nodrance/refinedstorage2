@@ -7,6 +7,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewItem;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
+import com.refinedmods.refinedstorage.api.resource.list.ResourceList;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -147,11 +148,11 @@ public final class PreviewCalculator {
         return crafted;
     }
 
-    private static Map<ResourceKey, Long> toPositiveMap(final Map<ResourceKey, Long> resources) {
+    private static Map<ResourceKey, Long> toPositiveMap(final ResourceList resources) {
         final Map<ResourceKey, Long> result = new LinkedHashMap<>();
-        for (final var entry : resources.entrySet()) {
-            if (entry.getValue() > 0L) {
-                result.merge(entry.getKey(), entry.getValue(), Long::sum);
+        for (final ResourceAmount resourceAmount : resources.copyState()) {
+            if (resourceAmount.amount() > 0L) {
+                result.merge(resourceAmount.resource(), resourceAmount.amount(), Long::sum);
             }
         }
         return result;

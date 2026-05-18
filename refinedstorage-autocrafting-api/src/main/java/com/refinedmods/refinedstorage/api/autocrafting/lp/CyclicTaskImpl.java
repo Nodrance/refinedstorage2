@@ -17,6 +17,7 @@ import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceList;
 import com.refinedmods.refinedstorage.api.resource.list.MutableResourceListImpl;
+import com.refinedmods.refinedstorage.api.resource.list.ResourceList;
 import com.refinedmods.refinedstorage.api.storage.Actor;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
@@ -68,7 +69,14 @@ final class CyclicTaskImpl extends TaskImpl {
         this.startTime = System.currentTimeMillis();
         this.rootPattern = rootPattern;
 
-        final CyclicMergedPlan mergedPlan = toMergedPlan(resource, amount, path.steps(), patternsById, rootPattern);
+        final CyclicMergedPlan mergedPlan = toMergedPlan(
+            resource,
+            amount,
+            path.steps(),
+            path.peakResourceUsage(),
+            patternsById,
+            rootPattern
+        );
         mergedPlan.initialRequirements().forEach(initialRequirements::add);
         this.plannerOverrideRemainingSteps = new HashMap<>(mergedPlan.plannerOverrideInitialSteps());
         this.consumedResourcesByPattern = mergedPlan.consumedResourcesByPattern();
@@ -453,6 +461,7 @@ final class CyclicTaskImpl extends TaskImpl {
     private static CyclicMergedPlan toMergedPlan(final ResourceKey requestedResource,
                                                   final long requestedAmount,
                                                   final List<DesanitizedRecipeApplicationStep> steps,
+                                                  final ResourceList peakResourceUsage,
                                                   final Map<UUID, Pattern> patternsById,
                                                   final Pattern rootPattern) {
         final Map<Pattern, MutablePatternPlan> mutablePlans = new LinkedHashMap<>();
@@ -490,8 +499,6 @@ final class CyclicTaskImpl extends TaskImpl {
         final Map<Pattern, TaskPlan.PatternPlan> patterns = new LinkedHashMap<>();
         final Map<Pattern, Integer> plannerOverrideInitialSteps = new LinkedHashMap<>();
         final Map<Pattern, Set<ResourceKey>> consumedResourcesByPattern = new LinkedHashMap<>();
-        final Map<ResourceKey, Long> totalInputs = new LinkedHashMap<>();
-        final Map<ResourceKey, Long> totalProduced = new LinkedHashMap<>();
 
         for (final var entry : mutablePlans.entrySet()) {
             final Pattern pattern = entry.getKey();
@@ -512,7 +519,6 @@ final class CyclicTaskImpl extends TaskImpl {
                     ingredientEntry.getValue()
                 );
                 immutableIngredients.put(ingredientIndex, new LinkedHashMap<>(orderedByInputPreference));
-                orderedByInputPreference.forEach((resource, amount) -> totalInputs.merge(resource, amount, Long::sum));
             }
 
             final Set<ResourceKey> consumedResources = new LinkedHashSet<>();
@@ -520,11 +526,6 @@ final class CyclicTaskImpl extends TaskImpl {
             consumedResourcesByPattern.put(pattern, Set.copyOf(consumedResources));
 
             plannerOverrideInitialSteps.put(pattern, (int) Math.min(Integer.MAX_VALUE, Math.max(0L, totalIterations)));
-            pattern.layout().outputs().forEach(output ->
-                totalProduced.merge(output.resource(), output.amount() * totalIterations, Long::sum));
-            pattern.layout().byproducts().forEach(byproduct ->
-                totalProduced.merge(byproduct.resource(), byproduct.amount() * totalIterations, Long::sum));
-
             patterns.put(pattern, new TaskPlan.PatternPlan(
                 mutable.root,
                 totalIterations,
@@ -533,11 +534,11 @@ final class CyclicTaskImpl extends TaskImpl {
         }
 
         final List<ResourceAmount> mergedInitialRequirements = new ArrayList<>();
-        totalInputs.forEach((resource, needed) -> {
-            final long produced = totalProduced.getOrDefault(resource, 0L);
-            final long requiredFromStorage = Math.max(0L, needed - produced);
-            if (requiredFromStorage > 0L) {
-                mergedInitialRequirements.add(new ResourceAmount(resource, requiredFromStorage));
+        peakResourceUsage.copyState().forEach(resourceAmount -> {
+            final ResourceKey resource = resourceAmount.resource();
+            final long needed = resourceAmount.amount();
+            if (needed > 0L) {
+                mergedInitialRequirements.add(new ResourceAmount(resource, needed));
             }
         });
 
