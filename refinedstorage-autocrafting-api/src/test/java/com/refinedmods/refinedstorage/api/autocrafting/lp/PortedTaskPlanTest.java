@@ -26,6 +26,7 @@ import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.O
 import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.SPRUCE_LOG;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
 
 class PortedTaskPlanTest {
     @Test

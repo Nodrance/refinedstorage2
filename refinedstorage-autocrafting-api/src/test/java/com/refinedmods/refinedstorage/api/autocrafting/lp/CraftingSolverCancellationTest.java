@@ -2,6 +2,11 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolver;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
 
 import java.util.List;
 import java.util.Optional;

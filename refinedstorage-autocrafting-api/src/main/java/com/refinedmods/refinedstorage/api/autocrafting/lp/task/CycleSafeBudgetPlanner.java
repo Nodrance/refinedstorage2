@@ -1,4 +1,4 @@
-package com.refinedmods.refinedstorage.api.autocrafting.lp;
+package com.refinedmods.refinedstorage.api.autocrafting.lp.task;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;

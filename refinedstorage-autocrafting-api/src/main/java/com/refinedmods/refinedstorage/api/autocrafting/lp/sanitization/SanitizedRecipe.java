@@ -1,4 +1,4 @@
-package com.refinedmods.refinedstorage.api.autocrafting.lp;
+package com.refinedmods.refinedstorage.api.autocrafting.lp.calculation;
 
 import java.util.Objects;
 import java.util.UUID;

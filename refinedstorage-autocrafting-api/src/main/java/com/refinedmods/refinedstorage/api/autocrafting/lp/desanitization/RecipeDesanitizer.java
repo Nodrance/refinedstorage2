@@ -1,4 +1,4 @@
-package com.refinedmods.refinedstorage.api.autocrafting.lp;
+package com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
@@ -16,6 +16,12 @@ import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationSet;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationStep;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
 
 // Turns MRKs back into single ResourceKeys
 // This is used to turn the sanitized recipes and resource pools that the crafting solver works with

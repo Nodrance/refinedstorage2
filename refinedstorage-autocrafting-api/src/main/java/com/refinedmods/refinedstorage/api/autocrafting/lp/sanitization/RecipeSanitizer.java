@@ -1,4 +1,4 @@
-package com.refinedmods.refinedstorage.api.autocrafting.lp;
+package com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
@@ -6,6 +6,9 @@ import com.refinedmods.refinedstorage.api.autocrafting.PatternLayout;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;

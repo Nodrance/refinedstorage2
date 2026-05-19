@@ -1,0 +1,10 @@
+- crafting orchestrator
+- - recipe sanitizer
+- - recipe desanitizer
+- - crafting solver
+- - - execution planner
+- - - linear solver
+- - preview calculator
+- - task dispatcher
+- - - cyclic task impl
+- - - - cycle safe budget planner

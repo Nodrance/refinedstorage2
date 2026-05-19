@@ -25,6 +25,10 @@ import static com.refinedmods.refinedstorage.api.autocrafting.PatternBuilder.pat
 import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.A;
 import static com.refinedmods.refinedstorage.api.autocrafting.ResourceFixtures.C;
 import static org.assertj.core.api.Assertions.assertThat;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationStep;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.task.CyclicTaskImpl;
 
 class CyclicTaskImplTest {
     private static final ExternalPatternSinkProvider EMPTY_SINK_PROVIDER = pattern -> Collections.emptyList();

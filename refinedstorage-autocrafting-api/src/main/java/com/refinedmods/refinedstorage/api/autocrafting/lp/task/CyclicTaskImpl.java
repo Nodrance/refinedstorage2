@@ -1,6 +1,8 @@
-package com.refinedmods.refinedstorage.api.autocrafting.lp;
+package com.refinedmods.refinedstorage.api.autocrafting.lp.task;
 
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationStep;
 import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatus;
 import com.refinedmods.refinedstorage.api.autocrafting.status.TaskStatusBuilder;
 import com.refinedmods.refinedstorage.api.autocrafting.task.AbstractTaskPattern;
@@ -38,7 +40,7 @@ import java.lang.reflect.Method;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-final class CyclicTaskImpl extends TaskImpl {
+public final class CyclicTaskImpl extends TaskImpl {
     private static final Logger LOGGER = LoggerFactory.getLogger(CyclicTaskImpl.class);
 
     private final long startTime;
@@ -57,7 +59,7 @@ final class CyclicTaskImpl extends TaskImpl {
     private boolean cancelled;
     private boolean queueDirty = true;
 
-    CyclicTaskImpl(final ResourceKey resource,
+    public CyclicTaskImpl(final ResourceKey resource,
                    final long amount,
                    final Actor actor,
                    final boolean notify,

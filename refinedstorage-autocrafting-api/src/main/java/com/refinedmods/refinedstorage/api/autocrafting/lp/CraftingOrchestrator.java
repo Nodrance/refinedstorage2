@@ -31,6 +31,16 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipeAnalyzer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.LinearSolver;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolver;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.RecipeDesanitizer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.preview.PreviewCalculator;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization.RecipeSanitizer;
 
 // Orchestrates crafting tasks. Contains the main entry points for everything.
 public final class CraftingOrchestrator {

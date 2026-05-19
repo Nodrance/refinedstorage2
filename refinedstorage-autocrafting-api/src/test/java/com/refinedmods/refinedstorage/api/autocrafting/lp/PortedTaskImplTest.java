@@ -64,6 +64,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationStep;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.task.CyclicTaskImpl;
+
 class PortedTaskImplTest {
     private static final RecursiveComparisonConfiguration STATUS_CONFIG = RecursiveComparisonConfiguration.builder()
         .withIgnoredFields("info.startTime")
