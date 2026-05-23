@@ -1,6 +1,5 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp;
 
-import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
@@ -8,38 +7,33 @@ import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewItem;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreview;
-import com.refinedmods.refinedstorage.api.core.CoreValidations;
-import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolver;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.LinearSolver;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipeAnalyzer;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.LinearSolver;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolver;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.RecipeDesanitizer;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.preview.PreviewCalculator;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization.CraftingInitializer;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization.RecipeSanitizer;
 
 // Orchestrates crafting tasks. Contains the main entry points for everything.
@@ -47,111 +41,6 @@ public final class CraftingOrchestrator {
     private static final Logger LOGGER = LoggerFactory.getLogger(CraftingOrchestrator.class);
 
     private CraftingOrchestrator() {
-    }
-
-    public static Initialization initialize(
-        final RootStorage rootStorage,
-        final PatternRepository patternRepository,
-        final ResourceKey resource,
-        final long amount,
-        final CancellationToken cancellationToken
-    ) {
-        LOGGER.debug("[LPT] Entering initialize()");
-        Objects.requireNonNull(rootStorage, "rootStorage cannot be null");
-        Objects.requireNonNull(patternRepository, "patternRepository cannot be null");
-        Objects.requireNonNull(resource, "resource cannot be null");
-        Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
-        CoreValidations.validateLargerThanZero(amount, "Requested amount must be greater than 0");
-        throwIfCancelled(cancellationToken);
-
-        LOGGER.debug("[LPT] Copying Patterns");
-        final List<Pattern> allPatterns = List.copyOf(patternRepository.getAll());
-        LOGGER.debug("[LPT] Filtering Patterns");
-        final List<Pattern> relevantPatterns = RecipeSanitizer.collectRelevantPatterns(allPatterns, List.of(resource));
-        if (relevantPatterns.isEmpty()) {
-            throw new IllegalStateException("No pattern found for " + resource);
-        }
-
-        LOGGER.debug("[LPT] Building resources");
-        final Set<ResourceKey> availableResources = new LinkedHashSet<>();
-        for (final ResourceAmount resourceAmount : rootStorage.getAll()) {
-            availableResources.add(resourceAmount.resource());
-        }
-        LOGGER.debug("[LPT] Trimming Patterns");
-        final List<Pattern> trimmedPatterns = RecipeSanitizer.trimFuzzyPatterns(
-            relevantPatterns,
-            availableResources
-        );
-
-        LOGGER.debug("[LPT] Computing MRKs");
-        final RecipeSanitizer.MultiResourceKeyIndex multiResourceKeyIndex =
-            RecipeSanitizer.computeMultiResourceKeyIndex(trimmedPatterns);
-        
-        LOGGER.debug("[LPT] Getting Pattern Priorities");
-        final Map<UUID, Integer> patternPriorities = new LinkedHashMap<>();
-        for (final Pattern pattern : relevantPatterns) {
-            patternPriorities.put(pattern.id(), patternRepository.getPriority(pattern));
-        }
-
-        
-        LOGGER.debug("[LPT] Sanitizing Recipes");
-        final List<SanitizedRecipe> sanitizedRecipes = RecipeSanitizer.toSanitizedRecipes(
-            trimmedPatterns,
-            multiResourceKeyIndex,
-            patternPriorities
-        );
-
-
-        LOGGER.debug("[LPT] Collecting Relevant Resource Keys");
-        final MultiResourceKey targetResource = new MultiResourceKey(List.of(resource));
-        final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
-            SanitizedRecipeAnalyzer.collectRelevantResourceKeys(sanitizedRecipes)
-        );
-        relevantResources.add(targetResource);
-
-        LOGGER.debug("[LPT] Building relevant starting resources");
-        final ResourcePool relevantStartingResources = RecipeSanitizer.buildRelevantStartingResources(
-            rootStorage,
-            relevantResources
-        );
-        LOGGER.debug("[LPT] Building sanitized starting resources");
-        final Map<ResourceKey, Long> sanitizedStartingResources = RecipeSanitizer.buildSanitizedStartingResources(
-            rootStorage,
-            relevantResources
-        );
-
-
-        final ResourcePool target = ResourcePool.empty();
-        final long targetAmount = relevantStartingResources.getAmount(targetResource) + amount;
-        target.setAmount(targetResource, targetAmount);
-
-        // COMPATABILITY
-		// Comment this line to speed things up a bit at the cost of it just normally failing to solve 
-		// instead of failing to solve with a fancy "overflow error" screen
-
-        LOGGER.debug("[LPT] Validating overflow inputs");
-        validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
-
-        final Initialization init = new Initialization(
-            sanitizedRecipes,
-            relevantStartingResources,
-            target,
-            sanitizedStartingResources,
-            relevantResources,
-            relevantPatterns,
-            trimmedPatterns
-        );
-        LOGGER.debug(
-            "[LP] Initialization complete: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
-                + "{} relevantResources, {} relevantPatterns, {} trimmedPatterns",
-            init.sanitizedRecipes().size(), 
-            init.relevantStartingResources(), 
-            init.target(), 
-            init.relevantResources().size(), 
-            init.relevantPatterns().size(), 
-            init.trimmedPatterns().size()
-        );
-        return init;
     }
 
     public static Optional<DesanitizedRecipeApplicationPath> solve(
@@ -163,7 +52,7 @@ public final class CraftingOrchestrator {
     ) {
         LOGGER.debug("[LPT] Entering solve(RootStorage, PatternRepository, ResourceKey, long, CancellationToken)");
         try {
-            final Initialization initialization = initialize(
+            final Initialization initialization = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -183,7 +72,7 @@ public final class CraftingOrchestrator {
             final Optional<DesanitizedRecipeApplicationPath> result = solve(initialization, cancellationToken);
             // LOGGER.debug("[LP] Solve result: {}", result);
             return result;
-        } catch (final LpInputOverflowException e) {
+        } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solve(...) input overflow detected", e);
             return Optional.empty();
         } catch (final java.util.concurrent.CancellationException e) {
@@ -233,7 +122,7 @@ public final class CraftingOrchestrator {
                 + "RootStorage, PatternRepository, ResourceKey, long, CancellationToken)"
         );
         try {
-            final Initialization initialization = initialize(
+            final Initialization initialization = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -241,7 +130,7 @@ public final class CraftingOrchestrator {
                 cancellationToken
             );
             return solve(initialization, cancellationToken);
-        } catch (final LpInputOverflowException e) {
+        } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solveToStepPlan(...) input overflow detected", e);
             return Optional.empty();
         } catch (final java.util.concurrent.CancellationException e) {
@@ -281,14 +170,14 @@ public final class CraftingOrchestrator {
 
         final Initialization maxCalculationInitialization;
         try {
-            maxCalculationInitialization = initialize(
+            maxCalculationInitialization = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
                 1L,
                 cancellationToken
             );
-        } catch (final LpInputOverflowException e) {
+        } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] findMaxCraftableAmount(...) input overflow detected", e);
             return 0L;
         }
@@ -495,7 +384,7 @@ public final class CraftingOrchestrator {
     ) {
         LOGGER.debug("[LPT] Entering solveAndCalculatePreview()");
         try {
-            final Initialization initialization = initialize(
+            final Initialization initialization = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -520,7 +409,7 @@ public final class CraftingOrchestrator {
                 .orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
             // LOGGER.debug("[LP] Preview result: {}", previewResult);
             return new SolveAndPreviewResult(initialization, recipeApplicationPath, previewResult);
-        } catch (final LpInputOverflowException e) {
+        } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solveAndCalculatePreview(...) input overflow detected", e);
             return new SolveAndPreviewResult(
                 emptyInitialization(),
@@ -546,7 +435,7 @@ public final class CraftingOrchestrator {
     ) {
         LOGGER.debug("[LPT] Entering solveAndCalculateTreePreview()");
         try {
-            final Initialization initialization = initialize(
+            final Initialization initialization = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -575,7 +464,7 @@ public final class CraftingOrchestrator {
             );
             // LOGGER.debug("[LP] Tree preview result: {}", previewResult);
             return new SolveAndTreePreviewResult(initialization, recipeApplicationPath, previewResult);
-        } catch (final LpInputOverflowException e) {
+        } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solveAndCalculateTreePreview(...) input overflow detected", e);
             return new SolveAndTreePreviewResult(
                 emptyInitialization(),
@@ -602,74 +491,10 @@ public final class CraftingOrchestrator {
         return PreviewCalculator.calculateTreePreview(resource, amount, rootStorage, initialization, recipeApplicationPath);
     }
 
-    private static void validateOverflowInputs(
-        final RootStorage rootStorage,
-        final Collection<Pattern> allPatterns,
-        final long requestedAmount,
-        final long targetAmount
-    ) {
-        final int recipeUpperBound = LinearSolver.Options.defaults().recipeUpperBound();
-
-        validateAmountWithinRecipeUpperBound(requestedAmount, recipeUpperBound, "requested amount");
-        validateAmountWithinRecipeUpperBound(targetAmount, recipeUpperBound, "target amount");
-        for (final ResourceAmount resourceAmount : rootStorage.getAll()) {
-            validateAmountWithinRecipeUpperBound(
-                resourceAmount.amount(),
-                recipeUpperBound,
-                "starting amount for " + resourceAmount.resource()
-            );
-        }
-        validatePatternAmountsWithinRecipeUpperBound(allPatterns, recipeUpperBound);
-    }
-
-    private static void validatePatternAmountsWithinRecipeUpperBound(
-        final Collection<Pattern> patterns,
-        final int recipeUpperBound
-    ) {
-        for (final Pattern pattern : patterns) {
-            for (final Ingredient ingredient : pattern.layout().ingredients()) {
-                validateAmountWithinRecipeUpperBound(
-                    ingredient.amount(),
-                    recipeUpperBound,
-                    "ingredient amount in pattern " + pattern.id()
-                );
-            }
-            for (final ResourceAmount output : pattern.layout().outputs()) {
-                validateAmountWithinRecipeUpperBound(
-                    output.amount(),
-                    recipeUpperBound,
-                    "output amount in pattern " + pattern.id()
-                );
-            }
-        }
-    }
-
-    private static void validateAmountWithinRecipeUpperBound(
-        final long amount,
-        final int recipeUpperBound,
-        final String context
-    ) {
-        if (amount > recipeUpperBound) {
-            throw new LpInputOverflowException(
-                context + " exceeds LP recipe upper bound " + recipeUpperBound + ": " + amount
-            );
-        }
-    }
-
     private static void throwIfCancelled(final CancellationToken cancellationToken) {
         LOGGER.debug("[LPT] Entering throwIfCancelled()");
         if (cancellationToken.isCancelled()) {
             throw new java.util.concurrent.CancellationException("LP crafting initializer cancelled");
-        }
-    }
-
-    private static final class LpInputOverflowException extends RuntimeException {
-        private LpInputOverflowException(final String message) {
-            super(message);
-        }
-
-        private LpInputOverflowException(final String message, final Throwable cause) {
-            super(message, cause);
         }
     }
 

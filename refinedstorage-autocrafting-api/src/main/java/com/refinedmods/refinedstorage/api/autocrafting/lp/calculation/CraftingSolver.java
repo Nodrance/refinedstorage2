@@ -211,7 +211,7 @@ public final class CraftingSolver {
         }
 
         final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
-            SanitizedRecipeAnalyzer.collectRelevantResourceKeys(recipes)
+            SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes)
         );
         relevantResources.addAll(target.resourceKeys());
 
@@ -242,10 +242,10 @@ public final class CraftingSolver {
         final List<SanitizedRecipe> deficitPriorityRecipes = reverseRecipePrioritiesForDeficitAnalysis(recipes);
 
         final List<SanitizedRecipe> selectedRecipes =
-            SanitizedRecipeAnalyzer.selectTopPriorityRecipesPerOutputResource(deficitPriorityRecipes);
+            SanitizedRecipePriorityAnalyzer.selectTopPriorityRecipesPerOutputResource(deficitPriorityRecipes);
 
         final Set<MultiResourceKey> leafDeficitResources = new LinkedHashSet<>(
-            SanitizedRecipeAnalyzer.collectLeafResources(selectedRecipes)
+            SanitizedRecipeResourceAnalyzer.collectLeafResources(selectedRecipes)
         );
         if (!leafDeficitResources.isEmpty()) {
             LOGGER.info(
@@ -264,7 +264,8 @@ public final class CraftingSolver {
             );
         }
 
-        final SanitizedRecipeAnalyzer.SnippedRecipes snippedRecipes = SanitizedRecipeAnalyzer.snipLoopsOnTargetBranches(
+        final SanitizedRecipeCycleAnalyzer.SnippedRecipes snippedRecipes =
+            SanitizedRecipeCycleAnalyzer.snipLoopsOnTargetBranches(
             selectedRecipes,
             target
         );
@@ -276,10 +277,10 @@ public final class CraftingSolver {
             recipes.size()
         );
         final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(
-            SanitizedRecipeAnalyzer.collectLeafResources(deficitRecipes)
+            SanitizedRecipeResourceAnalyzer.collectLeafResources(deficitRecipes)
         );
         deficitResources.addAll(
-            SanitizedRecipeAnalyzer.collectLoopEntryDeficitResourcesOnTargetBranches(selectedRecipes, target)
+            SanitizedRecipeCycleAnalyzer.collectLoopEntryDeficitResourcesOnTargetBranches(selectedRecipes, target)
         );
         return analyzeDeficitResources(
             deficitPriorityRecipes,
@@ -299,7 +300,8 @@ public final class CraftingSolver {
         final ResourcePool target,
         final String passName
     ) {
-        final Set<MultiResourceKey> relevantResources = SanitizedRecipeAnalyzer.collectRelevantResourceKeys(deficitRecipes);
+        final Set<MultiResourceKey> relevantResources =
+            SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(deficitRecipes);
         relevantResources.addAll(target.resourceKeys());
 
         final Set<MultiResourceKey> deficitResources = new LinkedHashSet<>(initialDeficitResources);
@@ -347,11 +349,11 @@ public final class CraftingSolver {
             final List<SanitizedRecipe> usedRecipes = deficitRecipes.stream()
                 .filter(recipe -> currentResult.recipeValues().getOrDefault(recipe.recipeId(), 0L) > 0L)
                 .toList();
-            final SanitizedRecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
-                SanitizedRecipeAnalyzer.detectRecipeCycles(usedRecipes);
+            final SanitizedRecipeCycleAnalyzer.CycleDetectionResult cycleDetectionResult =
+                SanitizedRecipeCycleAnalyzer.detectRecipeCycles(usedRecipes);
             if (cycleDetectionResult.cycles().isEmpty()) {
                 final Set<MultiResourceKey> optimizationRelevantResources = new LinkedHashSet<>(
-                    SanitizedRecipeAnalyzer.collectRelevantResourceKeys(optimizationRecipes)
+                    SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(optimizationRecipes)
                 );
                 optimizationRelevantResources.addAll(target.resourceKeys());
                 LOGGER.info(
@@ -514,7 +516,7 @@ public final class CraftingSolver {
                 ResourcePool.empty(),
                 startingResources.copy(),
                 deficitAnalysis.requiredBaseItems(),
-                SanitizedRecipeAnalyzer.collectRelevantResourceKeys(recipes).stream()
+                SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes).stream()
                     .sorted(Comparator.comparing(Object::toString))
                     .toList()
             );
@@ -541,7 +543,7 @@ public final class CraftingSolver {
             computeUsedResources(valuesByRecipe),
             solution.finalInventoryValues(),
             deficitAnalysis.requiredBaseItems(),
-            SanitizedRecipeAnalyzer.collectRelevantResourceKeys(recipes).stream()
+            SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes).stream()
                 .sorted(Comparator.comparing(Object::toString))
                 .toList()
         );
@@ -594,8 +596,8 @@ public final class CraftingSolver {
             final List<SanitizedRecipe> usedRecipes = recipes.stream()
                 .filter(recipe -> solution.get().recipeValues().getOrDefault(recipe.recipeId(), 0L) > 0)
                 .toList();
-            final SanitizedRecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
-                SanitizedRecipeAnalyzer.detectRecipeCycles(usedRecipes);
+            final SanitizedRecipeCycleAnalyzer.CycleDetectionResult cycleDetectionResult =
+                SanitizedRecipeCycleAnalyzer.detectRecipeCycles(usedRecipes);
             if (cycleDetectionResult.cycles().isEmpty()) {
                 bestFallbackDisabledRecipeIds = keepLargerSet(bestFallbackDisabledRecipeIds, disabledRecipeIds);
                 continue;
@@ -621,7 +623,7 @@ public final class CraftingSolver {
     ) {
         throwIfCancelled(loopSnippingCancellationToken, "LP loop snipping cancelled");
         final Set<MultiResourceKey> relevantResources = new LinkedHashSet<>(
-            SanitizedRecipeAnalyzer.collectRelevantResourceKeys(recipes)
+            SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes)
         );
         relevantResources.addAll(target.resourceKeys());
 

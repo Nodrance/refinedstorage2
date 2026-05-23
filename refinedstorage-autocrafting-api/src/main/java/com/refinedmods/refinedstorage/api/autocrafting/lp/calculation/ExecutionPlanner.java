@@ -109,8 +109,8 @@ public final class ExecutionPlanner {
             }
         }
 
-        final SanitizedRecipeAnalyzer.CycleDetectionResult cycleDetectionResult =
-            SanitizedRecipeAnalyzer.detectRecipeCycles(recipes);
+        final SanitizedRecipeCycleAnalyzer.CycleDetectionResult cycleDetectionResult =
+            SanitizedRecipeCycleAnalyzer.detectRecipeCycles(recipes);
         final Map<UUID, Boolean> inLoopById = cycleDetectionResult.inLoopByRecipeId();
 
         final ResourcePool inventory = startingResources.copy();
@@ -388,7 +388,7 @@ public final class ExecutionPlanner {
         // for (final RecipeApplicationStep step : steps) {
         //     recipesById.putIfAbsent(step.recipe().recipeId(), step.recipe());
         // }
-        // return !SanitizedRecipeAnalyzer.detectRecipeCycles(new ArrayList<>(recipesById.values())).cycles().isEmpty();
+        // return !SanitizedRecipeCycleAnalyzer.detectRecipeCycles(new ArrayList<>(recipesById.values())).cycles().isEmpty();
     }
 
     private static List<RecipeApplicationStep> reorderCyclicSteps(
