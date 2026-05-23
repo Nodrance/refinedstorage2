@@ -3,6 +3,8 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingProblem;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolution;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.Preview;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewItem;
 import com.refinedmods.refinedstorage.api.autocrafting.preview.PreviewType;
@@ -10,11 +12,7 @@ import com.refinedmods.refinedstorage.api.autocrafting.preview.TreePreview;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.storage.root.RootStorage;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +50,7 @@ public final class CraftingOrchestrator {
     ) {
         LOGGER.debug("[LPT] Entering solve(RootStorage, PatternRepository, ResourceKey, long, CancellationToken)");
         try {
-            final Initialization initialization = CraftingInitializer.initialize(
+            final CraftingProblem problem = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -69,7 +67,7 @@ public final class CraftingOrchestrator {
             //     initialization.relevantPatterns().size(),
             //     initialization.trimmedPatterns().size()
             // );
-            final Optional<DesanitizedRecipeApplicationPath> result = solve(initialization, cancellationToken);
+            final Optional<DesanitizedRecipeApplicationPath> result = solve(problem, cancellationToken);
             // LOGGER.debug("[LP] Solve result: {}", result);
             return result;
         } catch (final CraftingInitializer.LpInputOverflowException e) {
@@ -82,12 +80,12 @@ public final class CraftingOrchestrator {
     }
 
     public static Optional<DesanitizedRecipeApplicationPath> solve(
-        final Initialization initialization,
+        final CraftingProblem problem,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.debug("[LPT] Entering solve(Initialization, CancellationToken)");
+        LOGGER.debug("[LPT] Entering solve(CraftingProblem, CancellationToken)");
         try {
-            Objects.requireNonNull(initialization, "initialization cannot be null");
+            Objects.requireNonNull(problem, "problem cannot be null");
             Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
             throwIfCancelled(cancellationToken);
 
@@ -95,17 +93,14 @@ public final class CraftingOrchestrator {
                 cancellationToken
             );
 
-            return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).solve(
-                initialization.sanitizedRecipes(),
-                initialization.relevantStartingResources(),
-                initialization.target()
-            ).map(path -> RecipeDesanitizer.decodeRecipeApplicationPathToDesanitized(
-                path,
-                initialization.sanitizedStartingResources(),
+            return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).solve(problem)
+                .map(solution -> RecipeDesanitizer.decodeCraftingSolutionToDesanitized(
+                solution,
+                problem.sanitizedStartingResources(),
                 cancellationToken
             ));
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.debug("[LP] solve(initialization, ...) cancelled before path construction");
+            LOGGER.debug("[LP] solve(problem, ...) cancelled before path construction");
             return Optional.empty();
         }
     }
@@ -122,14 +117,14 @@ public final class CraftingOrchestrator {
                 + "RootStorage, PatternRepository, ResourceKey, long, CancellationToken)"
         );
         try {
-            final Initialization initialization = CraftingInitializer.initialize(
+            final CraftingProblem problem = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
                 amount,
                 cancellationToken
             );
-            return solve(initialization, cancellationToken);
+            return solve(problem, cancellationToken);
         } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solveToStepPlan(...) input overflow detected", e);
             return Optional.empty();
@@ -140,18 +135,18 @@ public final class CraftingOrchestrator {
     }
 
     public static Optional<DesanitizedRecipeApplicationPath> solveToStepPlan(
-        final Initialization initialization,
+        final CraftingProblem problem,
         final CancellationToken cancellationToken
     ) {
-        LOGGER.debug("[LPT] Entering solveToStepPlan(Initialization, CancellationToken)");
+        LOGGER.debug("[LPT] Entering solveToStepPlan(CraftingProblem, CancellationToken)");
         try {
-            Objects.requireNonNull(initialization, "initialization cannot be null");
+            Objects.requireNonNull(problem, "problem cannot be null");
             Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
             throwIfCancelled(cancellationToken);
 
-            return solve(initialization, cancellationToken);
+            return solve(problem, cancellationToken);
         } catch (final java.util.concurrent.CancellationException e) {
-            LOGGER.debug("[LP] solveToStepPlan(initialization, ...) cancelled before path construction");
+            LOGGER.debug("[LP] solveToStepPlan(problem, ...) cancelled before path construction");
             return Optional.empty();
         }
     }
@@ -168,7 +163,7 @@ public final class CraftingOrchestrator {
             return 0L;
         }
 
-        final Initialization maxCalculationInitialization;
+        final CraftingProblem maxCalculationInitialization;
         try {
             maxCalculationInitialization = CraftingInitializer.initialize(
                 rootStorage,
@@ -188,8 +183,8 @@ public final class CraftingOrchestrator {
 
         final LinearSolver.Result result = new LinearSolver(
             maxCalculationInitialization.sanitizedRecipes(),
-            maxCalculationInitialization.relevantResources(),
-            maxCalculationInitialization.relevantStartingResources(),
+            maxCalculationInitialization.relevantResourceKeys(),
+            maxCalculationInitialization.startingResources(),
             ResourcePool.empty(),
             Set.of(),
             Set.of(),
@@ -200,7 +195,7 @@ public final class CraftingOrchestrator {
             return 0L;
         }
 
-        final long startingAmount = maxCalculationInitialization.relevantStartingResources().getAmount(targetResource);
+        final long startingAmount = maxCalculationInitialization.startingResources().getAmount(targetResource);
         final long lpUpperBound = Math.max(
             0L,
             result.finalInventoryValues().getAmount(targetResource) - startingAmount
@@ -282,7 +277,7 @@ public final class CraftingOrchestrator {
     }
 
     private static long binarySearchMaxCraftableAmount(
-        final Initialization initialization,
+        final CraftingProblem problem,
         final MultiResourceKey targetResource,
         final long low,
         final long high,
@@ -293,7 +288,7 @@ public final class CraftingOrchestrator {
         long best = 0L;
         while (left <= right && !cancellationToken.isCancelled()) {
             final long middle = left + ((right - left) / 2L);
-            if (canCraftWithoutMissingResources(initialization, targetResource, middle, cancellationToken)) {
+            if (canCraftWithoutMissingResources(problem, targetResource, middle, cancellationToken)) {
                 best = middle;
                 left = middle + 1L;
             } else {
@@ -304,7 +299,7 @@ public final class CraftingOrchestrator {
     }
 
     private static boolean canCraftWithoutMissingResources(
-        final Initialization initialization,
+        final CraftingProblem problem,
         final MultiResourceKey targetResource,
         final long amount,
         final CancellationToken cancellationToken
@@ -315,14 +310,14 @@ public final class CraftingOrchestrator {
         final ResourcePool target = ResourcePool.empty();
         target.setAmount(
             targetResource,
-            initialization.relevantStartingResources().getAmount(targetResource) + amount
+            problem.startingResources().getAmount(targetResource) + amount
         );
         final CancellationToken loopSnippingCancellationToken = createLoopSnippingCancellationToken(
             cancellationToken
         );
         return new CraftingSolver(cancellationToken, loopSnippingCancellationToken).canCraftWithoutMissingResources(
-            initialization.sanitizedRecipes(),
-            initialization.relevantStartingResources(),
+            problem.sanitizedRecipes(),
+            problem.startingResources(),
             target
         );
     }
@@ -384,7 +379,7 @@ public final class CraftingOrchestrator {
     ) {
         LOGGER.debug("[LPT] Entering solveAndCalculatePreview()");
         try {
-            final Initialization initialization = CraftingInitializer.initialize(
+            final CraftingProblem problem = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -402,24 +397,24 @@ public final class CraftingOrchestrator {
             //     initialization.relevantPatterns().size(), 
             //     initialization.trimmedPatterns().size()
             // );
-            final Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
+            final Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath = solve(problem, cancellationToken);
             // LOGGER.debug("[LP] Solve result for preview: {}", recipeApplicationPath);
             final Preview previewResult = recipeApplicationPath
                 .map(path -> PreviewCalculator.calculatePreview(path, Set.of(resource), cancellationToken))
                 .orElse(new Preview(PreviewType.NOT_AVAILABLE, Collections.emptyList(), Collections.emptyList()));
             // LOGGER.debug("[LP] Preview result: {}", previewResult);
-            return new SolveAndPreviewResult(initialization, recipeApplicationPath, previewResult);
+            return new SolveAndPreviewResult(problem, recipeApplicationPath, previewResult);
         } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solveAndCalculatePreview(...) input overflow detected", e);
             return new SolveAndPreviewResult(
-                emptyInitialization(),
+                emptyProblem(),
                 Optional.empty(),
                 new Preview(PreviewType.OVERFLOW, Collections.emptyList(), Collections.emptyList())
             );
         } catch (final java.util.concurrent.CancellationException e) {
             LOGGER.debug("[LP] solveAndCalculatePreview(...) cancelled");
             return new SolveAndPreviewResult(
-                emptyInitialization(),
+                emptyProblem(),
                 Optional.empty(),
                 new Preview(PreviewType.CANCELLED, Collections.emptyList(), Collections.emptyList())
             );
@@ -435,7 +430,7 @@ public final class CraftingOrchestrator {
     ) {
         LOGGER.debug("[LPT] Entering solveAndCalculateTreePreview()");
         try {
-            final Initialization initialization = CraftingInitializer.initialize(
+            final CraftingProblem problem = CraftingInitializer.initialize(
                 rootStorage,
                 patternRepository,
                 resource,
@@ -446,35 +441,35 @@ public final class CraftingOrchestrator {
                 "[LP] Initialization for solveAndCalculateTreePreview: {} sanitizedRecipes, "
                     + "{} relevantStartingResources, {} target, {} relevantResources, "
                     + "{} relevantPatterns, {} trimmedPatterns",
-                initialization.sanitizedRecipes().size(),
-                initialization.relevantStartingResources(),
-                initialization.target(),
-                initialization.relevantResources().size(),
-                initialization.relevantPatterns().size(),
-                initialization.trimmedPatterns().size()
+                problem.sanitizedRecipes().size(),
+                problem.startingResources(),
+                problem.target(),
+                problem.relevantResourceKeys().size(),
+                problem.relevantPatterns().size(),
+                problem.trimmedPatterns().size()
             );
-            final Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath = solve(initialization, cancellationToken);
+            final Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath = solve(problem, cancellationToken);
             // LOGGER.debug("[LP] Solve result for tree preview: {}", recipeApplicationPath);
             final TreePreview previewResult = PreviewCalculator.calculateTreePreview(
                 resource,
                 amount,
                 rootStorage,
-                initialization,
+                problem,
                 recipeApplicationPath
             );
             // LOGGER.debug("[LP] Tree preview result: {}", previewResult);
-            return new SolveAndTreePreviewResult(initialization, recipeApplicationPath, previewResult);
+            return new SolveAndTreePreviewResult(problem, recipeApplicationPath, previewResult);
         } catch (final CraftingInitializer.LpInputOverflowException e) {
             LOGGER.debug("[LP] solveAndCalculateTreePreview(...) input overflow detected", e);
             return new SolveAndTreePreviewResult(
-                emptyInitialization(),
+                emptyProblem(),
                 Optional.empty(),
                 new TreePreview(PreviewType.OVERFLOW, null, Collections.emptyList())
             );
         } catch (final java.util.concurrent.CancellationException e) {
             LOGGER.debug("[LP] solveAndCalculateTreePreview(...) cancelled");
             return new SolveAndTreePreviewResult(
-                emptyInitialization(),
+                emptyProblem(),
                 Optional.empty(),
                 new TreePreview(PreviewType.CANCELLED, null, Collections.emptyList())
             );
@@ -485,10 +480,10 @@ public final class CraftingOrchestrator {
         final ResourceKey resource,
         final long amount,
         final RootStorage rootStorage,
-        final Initialization initialization,
+        final CraftingProblem problem,
         final Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath
     ) {
-        return PreviewCalculator.calculateTreePreview(resource, amount, rootStorage, initialization, recipeApplicationPath);
+        return PreviewCalculator.calculateTreePreview(resource, amount, rootStorage, problem, recipeApplicationPath);
     }
 
     private static void throwIfCancelled(final CancellationToken cancellationToken) {
@@ -498,64 +493,37 @@ public final class CraftingOrchestrator {
         }
     }
 
-    private static Initialization emptyInitialization() {
-        return new Initialization(
+    private static CraftingProblem emptyProblem() {
+        return new CraftingProblem(
             List.of(),
             ResourcePool.empty(),
             ResourcePool.empty(),
-            Map.of(),
             Set.of(),
+            Map.of(),
             List.of(),
             List.of()
         );
     }
 
-    public record Initialization(
-        List<SanitizedRecipe> sanitizedRecipes,
-        ResourcePool relevantStartingResources,
-        ResourcePool target,
-        Map<ResourceKey, Long> sanitizedStartingResources,
-        Set<MultiResourceKey> relevantResources,
-        List<Pattern> relevantPatterns,
-        List<Pattern> trimmedPatterns
-    ) {
-        public Initialization {
-            Objects.requireNonNull(sanitizedRecipes, "sanitizedRecipes cannot be null");
-            Objects.requireNonNull(relevantStartingResources, "relevantStartingResources cannot be null");
-            Objects.requireNonNull(target, "target cannot be null");
-            Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
-            Objects.requireNonNull(relevantResources, "relevantResources cannot be null");
-            Objects.requireNonNull(relevantPatterns, "relevantPatterns cannot be null");
-            Objects.requireNonNull(trimmedPatterns, "trimmedPatterns cannot be null");
-            sanitizedRecipes = List.copyOf(sanitizedRecipes);
-            relevantStartingResources = relevantStartingResources.copy();
-            target = target.copy();
-            sanitizedStartingResources = Map.copyOf(new LinkedHashMap<>(sanitizedStartingResources));
-            relevantResources = Set.copyOf(relevantResources);
-            relevantPatterns = List.copyOf(relevantPatterns);
-            trimmedPatterns = List.copyOf(trimmedPatterns);
-        }
-    }
-
     public record SolveAndPreviewResult(
-        Initialization initialization,
+        CraftingProblem problem,
         Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath,
         Preview previewResult
     ) {
         public SolveAndPreviewResult {
-            Objects.requireNonNull(initialization, "initialization cannot be null");
+            Objects.requireNonNull(problem, "problem cannot be null");
             Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
             Objects.requireNonNull(previewResult, "previewResult cannot be null");
         }
     }
 
     public record SolveAndTreePreviewResult(
-        Initialization initialization,
+        CraftingProblem problem,
         Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath,
         TreePreview previewResult
     ) {
         public SolveAndTreePreviewResult {
-            Objects.requireNonNull(initialization, "initialization cannot be null");
+            Objects.requireNonNull(problem, "problem cannot be null");
             Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
             Objects.requireNonNull(previewResult, "previewResult cannot be null");
         }

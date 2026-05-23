@@ -3,7 +3,7 @@ package com.refinedmods.refinedstorage.api.autocrafting.lp.preview;
 import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingOrchestrator;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingProblem;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipe;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationStep;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.desanitization.DesanitizedRecipeApplicationPath;
@@ -127,13 +127,13 @@ public final class PreviewCalculator {
         final ResourceKey resource,
         final long amount,
         final RootStorage rootStorage,
-        final CraftingOrchestrator.Initialization initialization,
+        final CraftingProblem problem,
         final java.util.Optional<DesanitizedRecipeApplicationPath> recipeApplicationPath
     ) {
         LOGGER.debug("[LPT] Entering calculateTreePreview()");
         Objects.requireNonNull(resource, "resource cannot be null");
         Objects.requireNonNull(rootStorage, "rootStorage cannot be null");
-        Objects.requireNonNull(initialization, "initialization cannot be null");
+        Objects.requireNonNull(problem, "problem cannot be null");
         Objects.requireNonNull(recipeApplicationPath, "recipeApplicationPath cannot be null");
 
         if (recipeApplicationPath.isPresent()) {
@@ -142,7 +142,7 @@ public final class PreviewCalculator {
                 amount,
                 rootStorage,
                 recipeApplicationPath.get(),
-                initialization.relevantPatterns()
+                problem.relevantPatterns()
             );
         }
 
@@ -151,7 +151,7 @@ public final class PreviewCalculator {
             Collections.emptyList(),
             Collections.emptyList()
         );
-        return buildFallbackTreePreview(resource, amount, preview, initialization.relevantPatterns());
+        return buildFallbackTreePreview(resource, amount, preview, problem.relevantPatterns());
     }
 
     private static Map<ResourceKey, Long> computeCraftedAmounts(

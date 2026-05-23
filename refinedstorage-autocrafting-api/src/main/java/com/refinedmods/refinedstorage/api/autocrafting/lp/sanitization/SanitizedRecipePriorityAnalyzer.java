@@ -1,4 +1,8 @@
-package com.refinedmods.refinedstorage.api.autocrafting.lp.calculation;
+package com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization;
+
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;

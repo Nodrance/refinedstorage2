@@ -1,6 +1,8 @@
 package com.refinedmods.refinedstorage.api.autocrafting.lp.calculation;
 
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization.SanitizedRecipePriorityAnalyzer;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.sanitization.SanitizedRecipeResourceAnalyzer;
 
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -60,7 +62,12 @@ public final class CraftingSolver {
         );
     }
 
-    public Optional<RecipeApplicationPath> solve(
+    public Optional<CraftingSolution> solve(final CraftingProblem problem) {
+        Objects.requireNonNull(problem, "problem cannot be null");
+        return solve(problem.sanitizedRecipes(), problem.startingResources(), problem.target());
+    }
+
+    public Optional<CraftingSolution> solve(
         final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
         final ResourcePool target
@@ -85,7 +92,7 @@ public final class CraftingSolver {
                     totalAmount(deficitAnalysis.requiredBaseItems())
                 );
                 throwIfCancelled();
-                return buildRecipeApplicationPath(recipes, startingResources, deficitAnalysis);
+                return buildCraftingSolution(recipes, startingResources, target, deficitAnalysis);
             }
 
             final CycleEliminationResult cycleEliminationResult;
@@ -102,9 +109,10 @@ public final class CraftingSolver {
                 LOGGER.info(
                     "[LP] solve: loop snipping cancelled, continuing with fallback deficit analysis"
                 );
-                return buildRecipeApplicationPath(
+                return buildCraftingSolution(
                     recipes,
                     startingResources,
+                    target,
                     computeRequiredBaseItemsAndSolution(recipes, startingResources, target)
                 );
             }
@@ -130,7 +138,7 @@ public final class CraftingSolver {
                 deficitAnalysis.requiredBaseItems()
             );
             throwIfCancelled();
-            return buildRecipeApplicationPath(reducedRecipes, startingResources, deficitAnalysis);
+            return buildCraftingSolution(reducedRecipes, startingResources, target, deficitAnalysis);
         } catch (final CancellationException e) {
             LOGGER.info("[LP] solve() cancelled.");
             return Optional.empty();
@@ -500,27 +508,35 @@ public final class CraftingSolver {
             .toList();
     }
 
-    private Optional<RecipeApplicationPath> buildRecipeApplicationPath(
+    private Optional<CraftingSolution> buildCraftingSolution(
         final List<SanitizedRecipe> recipes,
         final ResourcePool startingResources,
+        final ResourcePool target,
         final DeficitAnalysisResult deficitAnalysis
     ) {
+        final CraftingProblem problem = new CraftingProblem(
+            recipes,
+            startingResources,
+            target,
+            SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes),
+            Map.of(),
+            List.of(),
+            List.of()
+        );
+
         if (deficitAnalysis.solution().isEmpty()) {
             if (deficitAnalysis.requiredBaseItems().isEmpty()) {
                 return Optional.empty();
             }
 
-            final RecipeApplicationSet applicationSet = new RecipeApplicationSet(
-                recipes,
+            final CraftingApplication application = new CraftingApplication(
+                problem,
                 Map.of(),
                 ResourcePool.empty(),
                 startingResources.copy(),
-                deficitAnalysis.requiredBaseItems(),
-                SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes).stream()
-                    .sorted(Comparator.comparing(Object::toString))
-                    .toList()
+                deficitAnalysis.requiredBaseItems()
             );
-            return Optional.of(new RecipeApplicationPath(applicationSet, List.of(), ResourcePool.empty(), false));
+            return Optional.of(new CraftingSolution(application, List.of(), ResourcePool.empty(), false));
         }
 
         final LinearSolver.Result solution = deficitAnalysis.solution().get();
@@ -537,19 +553,16 @@ public final class CraftingSolver {
             }
         }
 
-        final RecipeApplicationSet applicationSet = new RecipeApplicationSet(
-            recipes,
+        final CraftingApplication application = new CraftingApplication(
+            problem,
             valuesByRecipe,
             computeUsedResources(valuesByRecipe),
             solution.finalInventoryValues(),
-            deficitAnalysis.requiredBaseItems(),
-            SanitizedRecipeResourceAnalyzer.collectRelevantResourceKeys(recipes).stream()
-                .sorted(Comparator.comparing(Object::toString))
-                .toList()
+            deficitAnalysis.requiredBaseItems()
         );
 
-        return ExecutionPlanner.buildRecipeApplicationPathFromApplicationSet(
-            applicationSet,
+        return ExecutionPlanner.buildCraftingSolutionFromApplication(
+            application,
             startingResources,
             cancellationToken
         );
@@ -587,8 +600,8 @@ public final class CraftingSolver {
 
             final DeficitAnalysisResult noDeficits =
                 new DeficitAnalysisResult(ResourcePool.empty(), Optional.of(solution.get()));
-            final Optional<RecipeApplicationPath> candidatePath =
-                buildRecipeApplicationPath(recipes, startingResources, noDeficits);
+            final Optional<CraftingSolution> candidatePath =
+                buildCraftingSolution(recipes, startingResources, target, noDeficits);
             if (candidatePath.isPresent()) {
                 return new CycleEliminationResult(candidatePath, Set.of());
             }
@@ -735,7 +748,7 @@ public final class CraftingSolver {
     }
 
     private record CycleEliminationResult(
-        Optional<RecipeApplicationPath> recipeApplicationResult,
+        Optional<CraftingSolution> recipeApplicationResult,
         Set<UUID> fallbackDisabledRecipeIds
     ) {
         private CycleEliminationResult {
@@ -752,4 +765,5 @@ public final class CraftingSolver {
             requiredBaseItems = requiredBaseItems.copy();
         }
     }
+
 }

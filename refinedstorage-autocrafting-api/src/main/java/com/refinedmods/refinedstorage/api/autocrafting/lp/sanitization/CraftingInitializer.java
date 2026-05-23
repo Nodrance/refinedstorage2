@@ -4,12 +4,11 @@ import com.refinedmods.refinedstorage.api.autocrafting.Ingredient;
 import com.refinedmods.refinedstorage.api.autocrafting.Pattern;
 import com.refinedmods.refinedstorage.api.autocrafting.PatternRepository;
 import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.CraftingOrchestrator.Initialization;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingProblem;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.LinearSolver;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipeResourceAnalyzer;
 import com.refinedmods.refinedstorage.api.core.CoreValidations;
 import com.refinedmods.refinedstorage.api.resource.ResourceAmount;
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
@@ -32,7 +31,7 @@ public final class CraftingInitializer {
     private CraftingInitializer() {
     }
 
-    public static Initialization initialize(
+    public static CraftingProblem initialize(
         final RootStorage rootStorage,
         final PatternRepository patternRepository,
         final ResourceKey resource,
@@ -108,12 +107,12 @@ public final class CraftingInitializer {
         LOGGER.debug("[LPT] Validating overflow inputs");
         validateOverflowInputs(rootStorage, allPatterns, amount, targetAmount);
 
-        final Initialization init = new Initialization(
+        final CraftingProblem init = new CraftingProblem(
             sanitizedRecipes,
             relevantStartingResources,
             target,
-            sanitizedStartingResources,
             relevantResources,
+            sanitizedStartingResources,
             relevantPatterns,
             trimmedPatterns
         );
@@ -121,9 +120,9 @@ public final class CraftingInitializer {
             "[LP] Initialization complete: {} sanitizedRecipes, {} relevantStartingResources, {} target, "
                 + "{} relevantResources, {} relevantPatterns, {} trimmedPatterns",
             init.sanitizedRecipes().size(),
-            init.relevantStartingResources(),
+            init.startingResources(),
             init.target(),
-            init.relevantResources().size(),
+            init.relevantResourceKeys().size(),
             init.relevantPatterns().size(),
             init.trimmedPatterns().size()
         );

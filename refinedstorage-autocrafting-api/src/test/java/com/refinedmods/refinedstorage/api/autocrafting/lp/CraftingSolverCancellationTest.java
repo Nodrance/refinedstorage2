@@ -4,8 +4,8 @@ import com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationT
 import com.refinedmods.refinedstorage.api.resource.ResourceKey;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolution;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolver;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationPath;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
 
 import java.util.List;
@@ -34,10 +34,10 @@ class CraftingSolverCancellationTest {
 
         final CraftingSolver sut = new CraftingSolver(CancellationToken.NONE, new CancelledToken());
 
-        final Optional<RecipeApplicationPath> result = sut.solve(List.of(recipe), startingResources, target);
+        final Optional<CraftingSolution> result = sut.solve(List.of(recipe), startingResources, target);
 
         assertThat(result).isPresent();
-        assertThat(result.get().applicationSet().missingResources().getAmount(key(OAK_PLANKS))).isEqualTo(1L);
+        assertThat(result.get().application().missingResources().getAmount(key(OAK_PLANKS))).isEqualTo(1L);
     }
 
     private static ResourcePool pool(final ResourceKey resource, final long amount) {

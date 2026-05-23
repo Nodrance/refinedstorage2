@@ -16,10 +16,10 @@ import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingApplication;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingSolution;
+import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.CraftingStep;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.MultiResourceKey;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationPath;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationSet;
-import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.RecipeApplicationStep;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.ResourcePool;
 import com.refinedmods.refinedstorage.api.autocrafting.lp.calculation.SanitizedRecipe;
 
@@ -38,43 +38,45 @@ public final class RecipeDesanitizer {
         return new LinkedHashMap<>(sanitizedStorage);
     }
 
-    public static DesanitizedRecipeApplicationPath decodeRecipeApplicationPathToDesanitized(
-        final RecipeApplicationPath path,
+    public static DesanitizedRecipeApplicationPath decodeCraftingSolutionToDesanitized(
+        final CraftingSolution solution,
         final Map<ResourceKey, Long> sanitizedStartingResources,
         final CancellationToken cancellationToken
     ) {
-        Objects.requireNonNull(path, "path cannot be null");
+        Objects.requireNonNull(solution, "solution cannot be null");
         Objects.requireNonNull(sanitizedStartingResources, "sanitizedStartingResources cannot be null");
         Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
         throwIfCancelled(cancellationToken);
 
         final List<DesanitizedRecipeApplicationStep> decodedSteps = decodePlanStepsToDesanitized(
-            path.steps(),
+            solution.steps(),
             sanitizedStartingResources,
             cancellationToken
         );
-        final RecipeApplicationSet applicationSet = path.applicationSet();
+        final CraftingApplication application = solution.application();
         final Map<ResourceKey, Long> decodedUsedResources = decodeSanitizedResourcePoolToDesanitized(
-            applicationSet.usedResources(),
+            application.usedResources(),
             sanitizedStartingResources,
             cancellationToken
         );
         final Map<ResourceKey, Long> decodedFinalInventoryValues = decodeSanitizedResourcesToDesanitizedRaw(
-            applicationSet.finalInventoryValues(),
+            application.finalInventoryValues(),
             cancellationToken
         );
         final Map<ResourceKey, Long> decodedMissingResources = decodeSanitizedResourcesToDesanitized(
-            applicationSet.missingResources(),
+            application.missingResources(),
             cancellationToken
         );
         final List<ResourceKey> decodedRelevantResourceKeys = decodeRelevantResourceKeysToDesanitized(
-            applicationSet.relevantResourceKeys(),
+            application.problem().relevantResourceKeys().stream()
+                .sorted(java.util.Comparator.comparing(Object::toString))
+                .toList(),
             cancellationToken
         );
         final Set<ResourceKey> relevantResourceKeys = new LinkedHashSet<>(decodedRelevantResourceKeys);
         relevantResourceKeys.addAll(decodedMissingResources.keySet());
         final Map<ResourceKey, Long> decodedPeakUsage = decodeSanitizedResourcePoolToDesanitized(
-            path.peakResourceUsage(),
+            solution.peakResourceUsage(),
             sanitizedStartingResources,
             cancellationToken
         );
@@ -86,7 +88,7 @@ public final class RecipeDesanitizer {
             decodedMissingResources,
             List.copyOf(relevantResourceKeys),
             decodedPeakUsage,
-            path.hasCycles()
+            solution.hasCycles()
         );
     }
 
@@ -201,7 +203,7 @@ public final class RecipeDesanitizer {
 
     // Decodes a list of sanitized recipe application steps into desanitized steps using only ResourceKey resources.
     public static List<DesanitizedRecipeApplicationStep> decodePlanStepsToDesanitized(
-        final List<RecipeApplicationStep> steps,
+        final List<CraftingStep> steps,
         final Map<ResourceKey, Long> sanitizedStartingResources,
         final CancellationToken cancellationToken
     ) {
@@ -212,7 +214,7 @@ public final class RecipeDesanitizer {
 
         final Map<ResourceKey, Long> remainingSanitizedStorage = new LinkedHashMap<>(sanitizedStartingResources);
         final List<DesanitizedRecipeApplicationStep> decodedSteps = new java.util.ArrayList<>();
-        for (final RecipeApplicationStep step : steps) {
+        for (final CraftingStep step : steps) {
             throwIfCancelled(cancellationToken);
             final SanitizedRecipe recipe = step.recipe();
             final Map<ResourceKey, Long> sanitizedOutput = convertToDesanitizedOutputs(recipe.output());
