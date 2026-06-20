@@ -40,6 +40,50 @@ class CraftingSolverCancellationTest {
         assertThat(result.get().application().missingResources().getAmount(key(OAK_PLANKS))).isEqualTo(1L);
     }
 
+    @Test
+    void shouldReturnEmptyWhenMainTokenIsCancelled() {
+        final SanitizedRecipe recipe = new SanitizedRecipe(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            pool(OAK_PLANKS, 1),
+            pool(OAK_PLANKS, 2),
+            0,
+            0
+        );
+
+        final CraftingSolver sut = new CraftingSolver(new CancelledToken(), CancellationToken.NONE);
+
+        final Optional<CraftingSolution> result = sut.solve(
+            List.of(recipe),
+            ResourcePool.empty(),
+            pool(OAK_PLANKS, 1)
+        );
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void shouldReturnFalseForCraftabilityWhenMainTokenIsCancelled() {
+        final SanitizedRecipe recipe = new SanitizedRecipe(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            pool(OAK_PLANKS, 1),
+            pool(OAK_PLANKS, 2),
+            0,
+            0
+        );
+
+        final CraftingSolver sut = new CraftingSolver(new CancelledToken(), CancellationToken.NONE);
+
+        final boolean canCraft = sut.canCraftWithoutMissingResources(
+            List.of(recipe),
+            ResourcePool.empty(),
+            pool(OAK_PLANKS, 1)
+        );
+
+        assertThat(canCraft).isFalse();
+    }
+
     private static ResourcePool pool(final ResourceKey resource, final long amount) {
         final ResourcePool pool = ResourcePool.empty();
         pool.setAmount(key(resource), amount);

@@ -15,6 +15,15 @@ base {
     archivesName.set("refinedstorage-autocrafting-api")
 }
 
+// Exclude legacy implementation folders from compilation (they're kept for reference)
+sourceSets {
+    named("main") {
+        java {
+            exclude("**/old_lp/**", "**/old_lp2/**")
+        }
+    }
+}
+
 dependencies {
     api(libs.apiguardian)
     api(project(":refinedstorage-resource-api"))

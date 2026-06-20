@@ -11,9 +11,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import org.ojalgo.optimisation.Expression;
 import org.ojalgo.optimisation.ExpressionsBasedModel;
@@ -24,7 +21,6 @@ import org.slf4j.LoggerFactory;
 
 public final class LinearSolver {
     private static final Logger LOGGER = LoggerFactory.getLogger(LinearSolver.class);
-    private static final long WAIT_SLICE_MILLIS = 250L;
 
     private final List<SanitizedRecipe> recipes;
     private final List<SanitizedRecipe> reversePriorityRecipes;
@@ -35,6 +31,7 @@ public final class LinearSolver {
     private final Set<UUID> disabledRecipeIds;
     private final Options options;
     private final CancellationToken cancellationToken;
+    private final OjalgoSolveRunner solveRunner;
 
     public LinearSolver(
         final List<SanitizedRecipe> recipes,
@@ -57,12 +54,66 @@ public final class LinearSolver {
         this.disabledRecipeIds = Set.copyOf(disabledRecipeIds);
         this.options = Objects.requireNonNull(options, "options cannot be null");
         this.cancellationToken = Objects.requireNonNull(cancellationToken, "cancellationToken cannot be null");
+        this.solveRunner = new OjalgoSolveRunner(this.cancellationToken, LOGGER);
     }
 
     public Result lexicographicMinimum() {
+        try {
+            return lexicographicMinimumWithReusableSession();
+        } catch (final CancellationException e) {
+            throw e;
+        } catch (final RuntimeException e) {
+            LOGGER.warn("[LP] lexicographicMinimum: reusable session failed, retrying with fresh models", e);
+            return lexicographicMinimumWithFreshModels();
+        }
+    }
+
+    private Result lexicographicMinimumWithReusableSession() {
         // Finds the solution for the target that minimizes each recipe
         // Starts with lowest priority recipes, "shifting" their uses to higher priority ones
         // Until we end up minimizing all recipes
+        throwIfCancelled();
+
+        final LexicographicSession session = createLexicographicSession();
+        final Result feasibilityResult = session.solve(false);
+        if (feasibilityResult == null) {
+            LOGGER.debug("[LP] lexicographicMinimum: no feasible solution for target {}", target);
+            return null;
+        }
+
+        final Map<UUID, Long> lockedRecipeValues = new LinkedHashMap<>();
+        for (final SanitizedRecipe recipe : reversePriorityRecipes) {
+            throwIfCancelled();
+            session.applyObjective(recipe.recipeId());
+            final Result result = session.solve(false);
+            Objects.requireNonNull(result, "Expected lexicographic lock step to remain feasible");
+
+            final long lockedValue = result.recipeValues().getOrDefault(recipe.recipeId(), 0L);
+            lockedRecipeValues.put(recipe.recipeId(), lockedValue);
+            session.addLock(recipe.recipeId(), lockedValue);
+        }
+
+        session.clearObjective();
+        final Result result = session.solve(false);
+        if (result == null) {
+            LOGGER.debug(
+                "[LP] lexicographicMinimum: became infeasible after locking {} recipes for target {}",
+                lockedRecipeValues.size(),
+                target
+            );
+            return null;
+        }
+        LOGGER.debug(
+            "[LP] lexicographicMinimum: solved with activeRecipes={}, totalRecipeApplications={}, "
+                + "nonZeroFinalInventoryResources= {}",
+            result.recipeValues().size(),
+            sumRecipeApplications(result.recipeValues()),
+            countNonZeroResources(result.finalInventoryValues())
+        );
+        return result;
+    }
+
+    private Result lexicographicMinimumWithFreshModels() {
         throwIfCancelled();
         final Result feasibilityResult = solveWithObjective(null, null, false, Map.of());
         if (feasibilityResult == null) {
@@ -167,28 +218,23 @@ public final class LinearSolver {
         // Solves a linear programming problem, minimizing or maximizing the given objective
         throwIfCancelled();
 
-        final FutureTask<Result> solveTask = new FutureTask<>(
-            () -> solveWithObjectiveInternal(objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues)
-        );
-        final Thread solveThread = new Thread(solveTask, "lp-ojalgo-solve");
-        solveThread.setDaemon(true);
-        solveThread.start();
-
         try {
-            return awaitNonCooperativeTask(
-                solveTask,
-                solveThread,
+            return solveRunner.run(
+                "lp-ojalgo-solve",
                 "solveWithObjective",
-                true,
-                objectiveResource,
-                objectiveRecipeId,
-                maximize,
-                lockedRecipeValues
+                () -> solveWithObjectiveInternal(objectiveResource, objectiveRecipeId, maximize, lockedRecipeValues),
+                () -> LOGGER.error(
+                    "[LP] Timed out solveWithObjective due to cancellation deadline. objectiveResource={}, "
+                        + "objectiveRecipeId={}, maximize={}, lockedRecipeValues={}",
+                    objectiveResource,
+                    objectiveRecipeId,
+                    maximize,
+                    lockedRecipeValues
+                )
             );
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             cancellationToken.cancel();
-            solveThread.interrupt();
             throw new CancellationException("Interrupted in solveWithObjective");
         } catch (final ExecutionException e) {
             final Throwable cause = e.getCause() == null ? e : e.getCause();
@@ -202,28 +248,16 @@ public final class LinearSolver {
     ) {
         throwIfCancelled();
 
-        final FutureTask<Result> solveTask = new FutureTask<>(
-            () -> solveForDeficitObjectiveInternal(deficitResources, minimumFinalInventory)
-        );
-        final Thread solveThread = new Thread(solveTask, "lp-ojalgo-deficit-solve");
-        solveThread.setDaemon(true);
-        solveThread.start();
-
         try {
-            return awaitNonCooperativeTask(
-                solveTask,
-                solveThread,
+            return solveRunner.run(
+                "lp-ojalgo-deficit-solve",
                 "solveForDeficitObjective",
-                false,
-                null,
-                null,
-                false,
-                Map.of()
+                () -> solveForDeficitObjectiveInternal(deficitResources, minimumFinalInventory),
+                solveRunner.simpleTimeoutLogger("solveForDeficitObjective")
             );
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             cancellationToken.cancel();
-            solveThread.interrupt();
             throw new CancellationException("Interrupted in solveForDeficitObjective");
         } catch (final ExecutionException e) {
             final Throwable cause = e.getCause() == null ? e : e.getCause();
@@ -246,14 +280,7 @@ public final class LinearSolver {
         addRecipeLocks(model, variableByRecipeId, lockedRecipeValues);
         throwIfCancelled();
 
-        final Optimisation.Result result = maximize ? model.maximise() : model.minimise();
-        if (!result.getState().isFeasible()) {
-            return null;
-        }
-
-        final Map<UUID, Long> recipeValues = extractUsedRecipeValues(variableByRecipeId);
-        final ResourcePool finalInventoryValues = computeFinalInventoryValues(recipeValues);
-        return new Result(Map.copyOf(recipeValues), finalInventoryValues.copy());
+        return solveModelAndExtract(model, variableByRecipeId, maximize);
     }
 
     private Result solveForDeficitObjectiveInternal(
@@ -279,107 +306,46 @@ public final class LinearSolver {
         return new Result(Map.copyOf(recipeValues), finalInventoryValues.copy());
     }
 
+    private Result solveModelAndExtract(
+        final ExpressionsBasedModel model,
+        final Map<UUID, Variable> variableByRecipeId,
+        final boolean maximize
+    ) {
+        throwIfCancelled();
+        final Optimisation.Result result = maximize ? model.maximise() : model.minimise();
+        if (!result.getState().isFeasible()) {
+            return null;
+        }
+
+        final Map<UUID, Long> recipeValues = extractUsedRecipeValues(variableByRecipeId);
+        final ResourcePool finalInventoryValues = computeFinalInventoryValues(recipeValues);
+        return new Result(Map.copyOf(recipeValues), finalInventoryValues.copy());
+    }
+
+    private LexicographicSession createLexicographicSession() {
+        final ExpressionsBasedModel model = createModelWithDiagnostics();
+        final Map<UUID, Variable> variableByRecipeId = createRecipeVariables(model);
+        addResourceConstraints(model, variableByRecipeId);
+        return new LexicographicSession(model, variableByRecipeId);
+    }
+
     private ExpressionsBasedModel createModelWithDiagnostics() {
         throwIfCancelled();
 
-        final FutureTask<ExpressionsBasedModel> task = new FutureTask<>(ExpressionsBasedModel::new);
-        final Thread modelConstructionThread = new Thread(task, "lp-ojalgo-model-construction");
-        modelConstructionThread.setDaemon(true);
-        modelConstructionThread.start();
-
         try {
-            return awaitNonCooperativeTask(
-                task,
-                modelConstructionThread,
+            return solveRunner.run(
+                "lp-ojalgo-model-construction",
                 "ExpressionsBasedModel construction",
-                false,
-                null,
-                null,
-                false,
-                Map.of()
+                ExpressionsBasedModel::new,
+                solveRunner.simpleTimeoutLogger("ExpressionsBasedModel construction")
             );
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             cancellationToken.cancel();
-            modelConstructionThread.interrupt();
             throw new CancellationException("Interrupted while creating ExpressionsBasedModel");
         } catch (final ExecutionException e) {
             throw new IllegalStateException("Failed creating ExpressionsBasedModel", e.getCause());
         }
-    }
-
-    private <T> T awaitNonCooperativeTask(
-        final FutureTask<T> task,
-        final Thread workerThread,
-        final String description,
-        final boolean logObjectiveDetails,
-        final MultiResourceKey objectiveResource,
-        final UUID objectiveRecipeId,
-        final boolean maximize,
-        final Map<UUID, Long> lockedRecipeValues
-    ) throws InterruptedException, ExecutionException {
-        while (true) {
-            throwIfCancelled();
-
-            final long remainingMillis = cancellationToken.timeRemainingMillis();
-            if (remainingMillis <= 0L) {
-                timeoutNonCooperativeTask(
-                    workerThread,
-                    description,
-                    logObjectiveDetails,
-                    objectiveResource,
-                    objectiveRecipeId,
-                    maximize,
-                    lockedRecipeValues
-                );
-            }
-
-            final long waitMillis = remainingMillis == Long.MAX_VALUE
-                ? WAIT_SLICE_MILLIS
-                : Math.min(remainingMillis, WAIT_SLICE_MILLIS);
-            try {
-                return task.get(waitMillis, TimeUnit.MILLISECONDS);
-            } catch (final TimeoutException e) {
-                if (cancellationToken.timeRemainingMillis() <= 0L) {
-                    timeoutNonCooperativeTask(
-                        workerThread,
-                        description,
-                        logObjectiveDetails,
-                        objectiveResource,
-                        objectiveRecipeId,
-                        maximize,
-                        lockedRecipeValues
-                    );
-                }
-            }
-        }
-    }
-
-    private void timeoutNonCooperativeTask(
-        final Thread workerThread,
-        final String description,
-        final boolean logObjectiveDetails,
-        final MultiResourceKey objectiveResource,
-        final UUID objectiveRecipeId,
-        final boolean maximize,
-        final Map<UUID, Long> lockedRecipeValues
-    ) {
-        cancellationToken.cancel();
-        if (logObjectiveDetails) {
-            LOGGER.error(
-                "[LP] Timed out {} due to cancellation deadline. objectiveResource={}, objectiveRecipeId={}, "
-                    + "maximize={}, lockedRecipeValues={}",
-                description,
-                objectiveResource,
-                objectiveRecipeId,
-                maximize,
-                lockedRecipeValues
-            );
-        } else {
-            LOGGER.error("[LP] Timed out {} due to cancellation deadline.", description);
-        }
-        workerThread.interrupt();
-        throw new CancellationException("Timed out " + description);
     }
 
     private void throwIfCancelled() {
@@ -589,6 +555,48 @@ public final class LinearSolver {
     }
 
     public record Result(Map<UUID, Long> recipeValues, ResourcePool finalInventoryValues) {
+    }
+
+    private final class LexicographicSession {
+        private final ExpressionsBasedModel model;
+        private final Map<UUID, Variable> variableByRecipeId;
+        private int objectiveSequence;
+        private Expression activeObjective;
+
+        private LexicographicSession(
+            final ExpressionsBasedModel model,
+            final Map<UUID, Variable> variableByRecipeId
+        ) {
+            this.model = Objects.requireNonNull(model, "model cannot be null");
+            this.variableByRecipeId = Objects.requireNonNull(variableByRecipeId, "variableByRecipeId cannot be null");
+        }
+
+        private Result solve(final boolean maximize) {
+            return solveModelAndExtract(model, variableByRecipeId, maximize);
+        }
+
+        private void applyObjective(final UUID objectiveRecipeId) {
+            throwIfCancelled();
+            Objects.requireNonNull(objectiveRecipeId, "objectiveRecipeId cannot be null");
+            clearObjective();
+            final Expression objective = model.newExpression("objective:recipe:" + objectiveSequence++).weight(1);
+            objective.set(variableByRecipeId.get(objectiveRecipeId), 1);
+            activeObjective = objective;
+        }
+
+        private void clearObjective() {
+            if (activeObjective != null) {
+                activeObjective.weight(0);
+                activeObjective = null;
+            }
+        }
+
+        private void addLock(final UUID recipeId, final long value) {
+            throwIfCancelled();
+            final Expression lockExpression = model.newExpression("lock:" + recipeId + ":" + objectiveSequence++);
+            lockExpression.level(value);
+            lockExpression.set(variableByRecipeId.get(recipeId), 1);
+        }
     }
 
     public record Options(int recipeUpperBound, int maxCycleEliminationBranches) {
